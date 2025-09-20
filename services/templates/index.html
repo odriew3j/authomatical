@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>ربات مقاله‌ساز وب</title>
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+</head>
+<body>
+<h1>موضوع مقاله خود را وارد کنید:</h1>
+<form id="articleForm">
+    <input type="text" name="keywords" placeholder="مثال: هوش مصنوعی" required>
+    <button type="submit">ثبت</button>
+</form>
+<div id="response"></div>
+
+<script>
+$("#articleForm").submit(function(e) {
+    e.preventDefault();
+    $.post("/submit", $(this).serialize(), function(data) {
+        $("#response").text(data.message);
+    });
+});
+</script>
+</body>
+</html>
