@@ -1,0 +1,5 @@
+services:
+  web:
+    start: gunicorn app:app
+  worker_article:
+    start: python workers/article_worker.py
