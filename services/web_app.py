@@ -1,21 +1,17 @@
 # services/web_app.py
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from messaging.redis_broker import RedisBroker
 from utils.helpers import log
+import os
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
 
 broker = RedisBroker(stream="article_jobs")
 
 @app.route("/", methods=["GET", "POST"])
 def index_or_publish():
     if request.method == "GET":
-
-        return jsonify({
-            "service": "authomatical",
-            "status": "running",
-            "message": "Send a POST request with article data to publish jobs."
-        })
+        return render_template("index.html")
 
     if request.method == "POST":
         data = request.json or {}
