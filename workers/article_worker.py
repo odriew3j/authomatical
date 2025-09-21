@@ -31,8 +31,10 @@ while True:
 
     for stream_name, msgs in messages:
         for msg_id, fields in msgs:
-            # Convert bytes to str
-            fields = {k.decode(): v.decode() for k, v in fields.items()}
+            # Convert bytes to str safely
+            fields = { (k.decode() if isinstance(k, bytes) else k):
+                    (v.decode() if isinstance(v, bytes) else v)
+                    for k, v in fields.items() }
             logging.info(f"Received job {msg_id}: {fields}")
 
             try:
