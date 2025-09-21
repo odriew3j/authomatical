@@ -2,7 +2,7 @@ import logging
 from messaging.redis_broker import RedisBroker
 from services.article_builder import ArticleBuilder
 from services.image_service import ImageService
-from modules.wordpress_post import WordPressPostModule
+from modules.wordpress_article import WordPressArticleModule
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 broker = RedisBroker(stream="article_jobs")
 article_builder = ArticleBuilder()
 image_service = ImageService()
-wp_module = WordPressPostModule()
+wp_module = WordPressArticleModule()
 
 GROUP = "article_jobs_group"
 CONSUMER = "article_worker_1"

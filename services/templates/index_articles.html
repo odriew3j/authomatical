@@ -41,14 +41,14 @@ $("#articleForm").submit(function(e) {
 
     const formData = {
         keywords: $("input[name='keywords']").val(),
-        chapters: $("input[name='chapters']").val(),
-        max_words: $("input[name='max_words']").val(),
-        tone: $("select[name='tone']").val(),
-        audience: $("input[name='audience']").val()
+        chapters: $("input[name='chapters']").val() || 5,
+        max_words: $("input[name='max_words']").val() || 500,
+        tone: $("select[name='tone']").val() || "informative",
+        audience: $("input[name='audience']").val() || "general"
     };
 
     $.ajax({
-        url: "/",   // همون روت اصلی Flask
+        url: "/articles/publish_article",
         type: "POST",
         contentType: "application/json",
         data: JSON.stringify(formData),

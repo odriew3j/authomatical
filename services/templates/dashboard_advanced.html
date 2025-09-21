@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>داشبورد نمای فرا دیجیتال</title>
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<style>
+body { font-family: Arial, sans-serif; background: #f0f0f0; padding: 20px; }
+h1 { text-align: center; margin-bottom: 30px; }
+.container { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 20px; }
+.card {
+    background: #fff; padding: 20px; border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1); width: 45%;
+}
+.card h2 { margin-top: 0; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+th { background: #eee; }
+button { padding: 5px 10px; margin: 2px; cursor: pointer; border-radius: 4px; border: none; }
+button.delete { background: #dc3545; color: white; }
+button.requeue { background: #28a745; color: white; }
+button.goto { background: #007bff; color: white; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<h1>داشبورد نمای فرا دیجیتال</h1>
+<div class="container">
+
+    <div class="card">
+        <h2>مقالات</h2>
+        <button class="goto" onclick="location.href='/articles/publish_article'">فرم مقالات</button>
+        <table id="articleJobs">
+            <thead>
+                <tr><th>Job ID</th><th>عنوان کلیدواژه</th><th>عملیات</th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>محصولات</h2>
+        <button class="goto" onclick="location.href='/products/publish_product'">فرم محصولات</button>
+        <table id="productJobs">
+            <thead>
+                <tr><th>Job ID</th><th>عنوان/کلیدواژه</th><th>عملیات</th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+</div>
+
+<script>
+function fetchJobs(jobType) {
+    $.get(`/api/jobs/${jobType}`, function(data){
+        let tbody = "";
+        data.forEach(job => {
+            let title = job.data.keywords || job.data.title || "—";
+            tbody += `<tr>
+                        <td>${job.id}</td>
+                        <td>${title}</td>
+                        <td>
+                            <button class="delete" onclick="deleteJob('${jobType}','${job.id}')">لغو</button>
+                            <button class="requeue" onclick="requeueJob('${jobType}','${job.id}')">دوباره ارسال</button>
+                        </td>
+                    </tr>`;
+        });
+        $(`#${jobType}Jobs tbody`).html(tbody);
+    });
+}
+
+function deleteJob(jobType, jobId){
+    $.post(`/api/jobs/${jobType}/delete/${jobId}`, function(){ fetchJobs(jobType); });
+}
+
+function requeueJob(jobType, jobId){
+    $.post(`/api/jobs/${jobType}/requeue/${jobId}`, function(){ fetchJobs(jobType); });
+}
+
+// Initial load and update every 5 seconds
+fetchJobs("article");
+fetchJobs("product");
+setInterval(() => { fetchJobs("article"); fetchJobs("product"); }, 5000);
+</script>
+
+</body>
+</html>

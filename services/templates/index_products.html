@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>فرم ایجاد محصول</title>
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+</head>
+<body>
+<h1>فرم ایجاد محصول</h1>
+<form id="productForm">
+    <label>عنوان محصول (title):</label><br>
+    <input type="text" name="title" placeholder="مثال: عینک آفتابی" required><br><br>
+
+    <label>قیمت اصلی (price):</label><br>
+    <input type="number" name="price" placeholder="مثال: 150000" required><br><br>
+
+    <label>قیمت فروش فوق‌العاده (sale_price):</label><br>
+    <input type="number" name="sale_price" placeholder="اختیاری"><br><br>
+
+    <label>دسته‌بندی (category):</label><br>
+    <input type="text" name="category" placeholder="مثال: عینک آفتابی"><br><br>
+
+    <label>برند (brand):</label><br>
+    <input type="text" name="brand" placeholder="مثال: Ray-Ban"><br><br>
+
+    <label>تگ‌ها (tags، با کاما جدا کنید):</label><br>
+    <input type="text" name="tags" placeholder="مثال: اسپرت,زنانه"><br><br>
+
+    <label>آدرس عکس‌ها (images، با کاما جدا کنید):</label><br>
+    <input type="text" name="images" placeholder="مثال: /uploads/img1.jpg,/uploads/img2.jpg"><br><br>
+
+    <label>کلیدواژه برای توضیحات (keywords):</label><br>
+    <input type="text" name="keywords" placeholder="مثال: عینک اسپرت"><br><br>
+
+    <label>لحن (tone):</label><br>
+    <select name="tone">
+        <option value="">پیشفرض: informative</option>
+        <option value="informative">اطلاعاتی</option>
+        <option value="persuasive">ترغیبی</option>
+        <option value="friendly">دوستانه</option>
+        <option value="technical">فنی</option>
+    </select><br><br>
+
+    <label>مخاطب (audience):</label><br>
+    <input type="text" name="audience" placeholder="مثال: general / marketers"><br><br>
+
+    <button type="submit">ارسال</button>
+</form>
+
+<hr>
+<div id="response"></div>
+
+<script>
+$("#productForm").submit(function(e) {
+    e.preventDefault();
+
+    const formData = {
+        title: $("input[name='title']").val(),
+        price: $("input[name='price']").val(),
+        sale_price: $("input[name='sale_price']").val(),
+        category: $("input[name='category']").val() || "Uncategorized",
+        brand: $("input[name='brand']").val(),
+        tags: $("input[name='tags']").val() ? $("input[name='tags']").val().split(",") : [],
+        images: $("input[name='images']").val() ? $("input[name='images']").val().split(",") : [],
+        keywords: $("input[name='keywords']").val() || "",
+        tone: $("select[name='tone']").val() || "informative",
+        audience: $("input[name='audience']").val() || "general"
+    };
+
+    $.ajax({
+        url: "/products/publish_product",
+        type: "POST",
+        contentType: "application/json",
+        data: JSON.stringify(formData),
+        success: function(data) {
+            $("#response").html(
+                "<p>Job ID: " + data.job_id + "</p>" +
+                "<p>Status: " + data.status + "</p>"
+            );
+        },
+        error: function(xhr) {
+            $("#response").text("خطا: " + xhr.responseText);
+        }
+    });
+});
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 from clients.wordpress_client import WordPressClient
 
-class WordPressPostModule:
+class WordPressArticleModule:
     def __init__(self):
         self.wp = WordPressClient()
 

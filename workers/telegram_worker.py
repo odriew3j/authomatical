@@ -3,9 +3,7 @@ from telegram import Update
 from telegram.ext import CommandHandler, MessageHandler, filters, ContextTypes
 from clients.telegram_client import TelegramClient
 from messaging.redis_broker import RedisBroker
-from config import Config  # <- حتما این باشه
-
-print("TOKEN:", Config.TELEGRAM_BOT_TOKEN)  # تست توکن
+from config import Config
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
