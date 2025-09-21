@@ -1,2 +1,1 @@
-web: waitress-serve --port=$PORT main:app
-worker_article: python workers/article_worker.py
+web: gunicorn services.web_app:app --bind 0.0.0.0:8080

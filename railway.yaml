@@ -1,13 +1,14 @@
 services:
   web:
     build: .
-    start: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2
+    start: waitress-serve --port=$PORT services.web_app:app
     env:
       - WORDPRESS_USER
       - WORDPRESS_PASSWORD
       - WORDPRESS_URL
       - MAX_RETRIES
       - TIMEOUT
+
   worker_article:
     build: .
     start: python workers/article_worker.py
