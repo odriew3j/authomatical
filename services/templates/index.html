@@ -6,18 +6,61 @@
 <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
 </head>
 <body>
-<h1>موضوع مقاله خود را وارد کنید:</h1>
+<h1>فرم ایجاد مقاله</h1>
 <form id="articleForm">
-    <input type="text" name="keywords" placeholder="مثال: هوش مصنوعی" required>
-    <button type="submit">ثبت</button>
+    <label>کلیدواژه‌ها (keywords):</label><br>
+    <input type="text" name="keywords" placeholder="مثال: هوش مصنوعی" required><br><br>
+
+    <label>تعداد فصل‌ها (chapters):</label><br>
+    <input type="number" name="chapters" placeholder="پیشفرض: 5"><br><br>
+
+    <label>حداکثر تعداد کلمات هر فصل (max_words):</label><br>
+    <input type="number" name="max_words" placeholder="پیشفرض: 500"><br><br>
+
+    <label>لحن (tone):</label><br>
+    <select name="tone">
+        <option value="">پیشفرض: informative</option>
+        <option value="informative">اطلاعاتی</option>
+        <option value="persuasive">ترغیبی</option>
+        <option value="friendly">دوستانه</option>
+        <option value="technical">فنی</option>
+    </select><br><br>
+
+    <label>مخاطب (audience):</label><br>
+    <input type="text" name="audience" placeholder="مثال: developers / general"><br><br>
+
+    <button type="submit">ارسال</button>
 </form>
+
+<hr>
 <div id="response"></div>
 
 <script>
 $("#articleForm").submit(function(e) {
     e.preventDefault();
-    $.post("/submit", $(this).serialize(), function(data) {
-        $("#response").text(data.message);
+
+    const formData = {
+        keywords: $("input[name='keywords']").val(),
+        chapters: $("input[name='chapters']").val(),
+        max_words: $("input[name='max_words']").val(),
+        tone: $("select[name='tone']").val(),
+        audience: $("input[name='audience']").val()
+    };
+
+    $.ajax({
+        url: "/",   // همون روت اصلی Flask
+        type: "POST",
+        contentType: "application/json",
+        data: JSON.stringify(formData),
+        success: function(data) {
+            $("#response").html(
+                "<p>Job ID: " + data.job_id + "</p>" +
+                "<p>Status: " + data.status + "</p>"
+            );
+        },
+        error: function(xhr) {
+            $("#response").text("خطا: " + xhr.responseText);
+        }
     });
 });
 </script>
