@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 broker = RedisBroker(stream="article_jobs")
 
-@app.route("/publish_article", methods=["POST"])
+@app.route("/", methods=["POST"])
 def publish_article():
     data = request.json or {}
     job_data = {
