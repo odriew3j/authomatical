@@ -1,8 +1,11 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
-REDIS_URL = os.environ.get("REDIS_URL")
+if os.environ.get("RAILWAY_ENVIRONMENT") is None:  # یعنی توی Railway نیستی
+    from dotenv import load_dotenv
+    load_dotenv()
+
+
+
 class Config:
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
     WORDPRESS_URL = os.getenv("WORDPRESS_URL")
