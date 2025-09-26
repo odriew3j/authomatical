@@ -32,5 +32,5 @@ if __name__ == "__main__":
     tg = TelegramClient()
     tg.add_handler(CommandHandler("start", start))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # Only run_polling not asyncio.run
+    
     tg.app.run_polling(poll_interval=5, timeout=30, drop_pending_updates=True)
