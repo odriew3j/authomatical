@@ -1,7 +1,7 @@
 import logging
-import asyncio
 from telegram import Update
 from telegram.ext import CommandHandler, MessageHandler, filters, ContextTypes
+
 from clients.telegram_client import TelegramClient
 from messaging.redis_broker import RedisBroker
 
@@ -28,14 +28,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.info(f"Published job id: {job_id}")
     await update.message.reply_text("درخواستت ثبت شد، مقاله در حال تولید است...")
 
-async def main():
+if __name__ == "__main__":
     tg = TelegramClient()
     tg.add_handler(CommandHandler("start", start))
     tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    await tg.run()
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logging.info("Telegram worker stopped by user.")
+    # Only run_polling not asyncio.run
+    tg.app.run_polling(poll_interval=5, timeout=30, drop_pending_updates=True)
