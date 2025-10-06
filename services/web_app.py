@@ -2,10 +2,10 @@ from flask import Flask, render_template, jsonify, request
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from blueprints.article import article_bp
-from blueprints.product import product_bp
+from services.blueprints.article import article_bp
+from services.blueprints.product import product_bp
 from messaging.redis_broker import RedisBroker
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))

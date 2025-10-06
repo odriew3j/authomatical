@@ -2,12 +2,14 @@ import logging
 from messaging.redis_broker import RedisBroker
 from clients.openrouter_client import OpenRouterClient
 from modules.wordpress_product import WordPressProductModule
+from services.product_builder import ProductBuilder
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
 broker = RedisBroker(stream="product_jobs")
 ai_service = OpenRouterClient()
 wp_product = WordPressProductModule()
+product_builder = ProductBuilder()
 
 GROUP = "product_jobs_group"
 CONSUMER = "product_worker_1"
@@ -38,9 +40,11 @@ while True:
                 images = fields.get("images", "").split(",") if fields.get("images") else []
 
                 #2. Description generation and SEO with AI
-                description = ai_service.generate_description(title, fields.get("keywords", ""), fields.get("tone", "informative"), fields.get("audience", "general"))
-                seo_meta = ai_service.generate_seo(title, fields.get("keywords", ""))
-
+                description = product_builder.generate_description(
+                    title, fields.get("keywords", ""), fields.get("tone", "informative"), fields.get("audience", "general")
+                )
+                seo_meta = product_builder.generate_seo(title, fields.get("keywords", ""))
+                
                 #3. Product Creation in WordPress
                 product_id = wp_product.create_product(
                     title=title,

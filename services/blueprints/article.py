@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify, render_template
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from messaging.redis_broker import RedisBroker
 from utils.helpers import log

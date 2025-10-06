@@ -11,6 +11,8 @@ class Config:
     WORDPRESS_URL = os.getenv("WORDPRESS_URL")
     WORDPRESS_USER = os.getenv("WORDPRESS_USER")
     WORDPRESS_PASSWORD = os.getenv("WORDPRESS_PASSWORD")
+    WC_CONSUMER_KEY = os.getenv("WC_CONSUMER_KEY")
+    WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET")
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     REDIS_URL = os.getenv("REDIS_URL")
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
