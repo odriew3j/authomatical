@@ -77,12 +77,11 @@ class WooCommerceClient:
                     auth=self.auth,
                     files=files,
                     headers=headers,
+                    data={"post": product_id},   # attach media
                     timeout=Config.TIMEOUT
                 )
                 if res.status_code == 201:
-                    media_id = res.json()["id"]
-                    self.update_product(product_id, {"images": [{"id": media_id}]})
-                    return media_id
+                    return res.json()["id"]
                 else:
                     log(f"[Retry {attempt+1}] WooCommerce media upload error: {res.text}")
             except requests.exceptions.RequestException as e:

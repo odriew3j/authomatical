@@ -1,3 +1,5 @@
+import os
+
 from clients.woocommerce_client import WooCommerceClient
 
 class WordPressProductModule:
@@ -53,15 +55,47 @@ class WordPressProductModule:
         if keywords:
             data["meta_data"].append({"key": "_yoast_wpseo_focuskw", "value": keywords})
 
-        # --- picture (link or None) ---
-        if images:
-            # if link
-            valid_images = [img for img in images if img.startswith("http")]
-            if valid_images:
-                data["images"] = [{"src": img} for img in valid_images]
-
+        # Create a product in WordPress
         product = self.wp.create_product(data)
-        return product.get("id")
+        product_id = product.get("id")
+
+        if not product_id:
+            raise Exception("❌ Failed to create product in WordPress.")
+
+        # Image management
+        images = data.get("images", "")
+        if images:
+            image_list = [{"src": url.strip()} for url in images.split(",")]
+            data["images"] = image_list
+        else:
+            data["images"] = []
+
+            uploaded_images = []
+            for img in images:
+                if img.startswith("http"):
+                    # Direct link
+                    uploaded_images.append({"src": img})
+                else:
+                    # Local file
+                    try:
+                        abs_path = os.path.abspath(img)
+                        with open(abs_path, "rb") as f:
+                            image_bytes = f.read()
+
+                        media_id = self.wp.upload_product_media(
+                            product_id,
+                            image_bytes,
+                            filename=os.path.basename(abs_path)
+                        )
+                        if media_id:
+                            uploaded_images.append({"id": media_id})
+                    except Exception as e:
+                        print(f"⚠️ Image upload error for {img}: {e}")
+
+            if uploaded_images:
+                self.wp.update_product(product_id, {"images": uploaded_images})
+
+        return product
 
     def upload_media(self, product_id, image_bytes, filename="image.jpg"):
         return self.wp.upload_product_media(product_id, image_bytes, filename)

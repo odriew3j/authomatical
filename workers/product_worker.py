@@ -1,4 +1,5 @@
 import logging
+import re
 from messaging.redis_broker import RedisBroker
 from clients.openrouter_client import OpenRouterClient
 from modules.wordpress_product import WordPressProductModule
@@ -14,6 +15,14 @@ product_builder = ProductBuilder()
 GROUP = "product_jobs_group"
 CONSUMER = "product_worker_1"
 
+def clean_description(desc: str) -> str:
+    """Remove code fences like ```html, ```, ~~~ from AI output."""
+    if not desc:
+        return ""
+    desc = re.sub(r"```(?:html)?", "", desc, flags=re.IGNORECASE)
+    desc = desc.replace("```", "").replace("~~~", "")
+    return desc.strip()
+
 logging.info("Product Worker started. Waiting for jobs...")
 
 while True:
@@ -23,10 +32,10 @@ while True:
 
     for stream_name, msgs in messages:
         for msg_id, fields in msgs:
-        # Convert bytes to str safely
+            # Convert bytes to str safely
             fields = { (k.decode() if isinstance(k, bytes) else k):
-                    (v.decode() if isinstance(v, bytes) else v)
-                    for k, v in fields.items() }
+                       (v.decode() if isinstance(v, bytes) else v)
+                       for k, v in fields.items() }
             logging.info(f"Received job {msg_id}: {fields}")
     
             try:
@@ -43,6 +52,8 @@ while True:
                 description = product_builder.generate_description(
                     title, fields.get("keywords", ""), fields.get("tone", "informative"), fields.get("audience", "general")
                 )
+                description = clean_description(description)
+
                 seo_meta = product_builder.generate_seo(title, fields.get("keywords", ""))
                 
                 #3. Product Creation in WordPress
