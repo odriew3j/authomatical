@@ -2,9 +2,12 @@ import os
 import logging
 import requests
 import mimetypes
+import re
 
 from telegram import Update
 from telegram.ext import CommandHandler, MessageHandler, filters, ContextTypes
+from services.product_builder import ProductBuilder
+from modules.wordpress_product import WordPressProductModule
 
 from config import Config
 from clients.telegram_client import TelegramClient
@@ -19,6 +22,28 @@ article_broker = RedisBroker(stream="article_jobs")
 product_broker = RedisBroker(stream="product_jobs")
 wordpress_broker = RedisBroker(stream="wordpress_jobs")
 
+builder = ProductBuilder()
+wp_module = WordPressProductModule()
+
+# --- Normalizer ---
+PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
+ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩"
+ENGLISH_DIGITS = "0123456789"
+
+digit_map = {p: e for p, e in zip(PERSIAN_DIGITS, ENGLISH_DIGITS)}
+digit_map.update({a: e for a, e in zip(ARABIC_DIGITS, ENGLISH_DIGITS)})
+
+def normalize_digits(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+    return "".join(digit_map.get(ch, ch) for ch in text)
+
+def normalize_price(value: str) -> int:
+    value = normalize_digits(value)
+    value = re.sub(r"[^\d]", "", value)
+    return int(value) if value else 0
+
+# --- Steps ---
 WORDPRESS_STEPS = [
     ("site_url", "🌐 آدرس سایت وردپرس رو وارد کن:"),
     ("username", "👤 نام کاربری وردپرس:"),
@@ -29,13 +54,29 @@ PRODUCT_STEPS = [
     ("title", "📦 نام محصول:"),
     ("price", "💰 قیمت محصول:"),
     ("sale_price", "💲 قیمت تخفیفی (اختیاری، اگر نداری بفرست -):"),
-    ("category", "📂 دسته‌بندی محصول:"),
-    ("brand", "🏷️ برند محصول (اختیاری):"),
-    ("tags", "🔖 تگ‌ها (با , جدا کن):"),
+    ("color", "🎨 رنگ محصول (اگر نمی‌خوای ثبت کنی فقط - بفرست):"),
+    ("stock", "📦 موجودی انبار (اگر نمی‌خوای ثبت کنی فقط - بفرست):"),
 ]
 
 ARTICLE_STEPS = [
     ("keywords", "📝 موضوع مقاله رو وارد کن:"),
+]
+
+# --- Categories ---
+CATEGORIES = [
+    ("اکسسوری", "accessories"),
+    ("دید در شب", "night-vision"),
+    ("عدسی طبی", "medical-lens"),
+    ("عینک آفتابی زنانه", "women-sunglasses"),
+    ("عینک آفتابی مردانه", "men-sunglasses"),
+    ("عینک اسپرت", "sports-glasses"),
+    ("عینک پلاریزه", "polarized-glasses"),
+    ("عینک طبی", "medical-glasses"),
+    ("عینک طبی زنانه", "women-medical-glasses"),
+    ("عینک طبی مردانه", "men-prescription-glasses"),
+    ("عینک های ساخت اروپا", "glasses-made-in-europe"),
+    ("فستیوال 1 عدد عینک 99 تومان", "festival-1-glasses-99-toman"),
+    ("فستیوال 2 عدد عینک 130 تومان", "festival-2-glasses-130-toman")
 ]
 
 # -------- HELPERS --------
@@ -83,6 +124,73 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_main_menu(update)
         return
 
+    # --- Category selection mode ---
+    if context.user_data.get("step") == "category_selection":
+        try:
+            choice = int(normalize_digits(text))
+            if 1 <= choice <= len(CATEGORIES):
+                category_slug = CATEGORIES[choice - 1][1]
+                context.user_data["data"]["category"] = category_slug
+
+                # Go to the image upload stage
+                context.user_data["step"] = "awaiting_images"
+                context.user_data["data"]["images"] = []
+                await update.message.reply_text(
+                    "🖼 لطفاً تصاویر محصول رو بفرست.\n"
+                    "می‌تونی چندتا عکس بفرستی. وقتی تموم شد، کلمه «پایان» رو بفرست."
+                )
+            else:
+                await update.message.reply_text("⚠️ لطفاً یک عدد معتبر انتخاب کن.")
+        except ValueError:
+            await update.message.reply_text("⚠️ لطفاً فقط عدد بفرست.")
+        return
+
+    # --- حالت آپلود عکس ---
+    if context.user_data.get("step") == "awaiting_images":
+        if text == "پایان":
+            data = context.user_data["data"]
+
+            # تولید متن و برند با AI
+            ai_product = builder.generate_full_product(
+                title=data["title"],
+                price=data.get("price", 0),
+                sale_price=data.get("sale_price") or None,
+                category=data.get("category")
+            )
+            brand_name = ai_product.get("brand", "Generic")
+
+            # ساخت محصول
+            product_data = {
+                "title": data["title"],
+                "description": ai_product["description"],
+                "price": data.get("price", 0),
+                "sale_price": data.get("sale_price") or None,
+                "category": data.get("category"),
+                "brand": brand_name,
+                "tags": ai_product.get("hashtags", "").split(","),
+                "images": data.get("images", []),
+                "meta_title": ai_product["seo"]["title"],
+                "meta_description": ai_product["seo"]["description"],
+                "keywords": ai_product["seo"]["keywords"],
+                "color": data.get("color") or "",
+                "stock_quantity": data.get("stock") or None,
+            }
+
+            wp_product = wp_module.create_product(**product_data)
+            job_id = product_broker.publish(product_data)
+
+            await update.message.reply_text(
+                f"✅ محصول ساخته شد.\n📂 دسته: {data['category']}\n🏷 برند: {brand_name}\n"
+                f"📌 job_id={job_id}, wp_id={wp_product.get('id')}"
+            )
+
+            context.user_data.clear()
+            await show_main_menu(update)
+        else:
+            await update.message.reply_text("⚠️ اگر آپلود تموم شده، کلمه «پایان» رو بفرست.")
+        return
+
+    # --- Starting mode ---
     if "step" not in context.user_data:
         if text == "1":
             init_chain(context, "wordpress", WORDPRESS_STEPS)
@@ -100,14 +208,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     step = context.user_data["step"]
     sub = context.user_data["substep"]
     steps = context.user_data["steps"]
-
     key = steps[sub][0]
-    if step == "article":
-        context.user_data["data"][key] = text
-    elif text == "-":
-        context.user_data["data"][key] = ""
+
+    # Normalize inputs
+    if key == "price" and text != "-":
+        context.user_data["data"][key] = normalize_price(text)
+    elif key == "sale_price" and text != "-":
+        context.user_data["data"][key] = normalize_price(text)
+    elif key == "stock" and text != "-":
+        context.user_data["data"][key] = int(normalize_digits(text))
+    elif key == "color":
+        context.user_data["data"][key] = text if text != "-" else ""
     else:
-        context.user_data["data"][key] = text
+        context.user_data["data"][key] = text if text != "-" else ""
 
     push_next_substep(context)
 
@@ -127,18 +240,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         job_id = article_broker.publish(job_data)
         await update.message.reply_text(f"✅ مقاله ثبت شد. job_id={job_id}")
+        context.user_data.clear()
+        await show_main_menu(update)
 
     elif step == "product":
-        await update.message.reply_text("✅ اطلاعات محصول ثبت شد. حالا عکس محصول رو بفرست 📷")
+        # Show category
+        msg = "📂 دسته‌بندی محصول را انتخاب کن:\n\n"
+        for i, (name, slug) in enumerate(CATEGORIES, start=1):
+            msg += f"{i}. {name}\n"
+        msg += "\n🔢 عدد مربوط به دسته رو بفرست."
+        await update.message.reply_text(msg)
+        context.user_data["step"] = "category_selection"
         return
 
     elif step == "wordpress":
         job_data = data.copy()
         job_id = wordpress_broker.publish(job_data)
         await update.message.reply_text(f"✅ اطلاعات وردپرس ذخیره شد. job_id={job_id}")
-
-    context.user_data.clear()
-    await show_main_menu(update)
+        context.user_data.clear()
+        await show_main_menu(update)
 
 # -------- HANDLE FILE/PHOTO --------
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -165,9 +285,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"🖼 تصویر ذخیره شد: {os.path.basename(file_path)}")
 
-    # wp_user = context.user_data.get("username")
-    # wp_pass = context.user_data.get("password")
-    # wp_url = context.user_data.get("site_url")
     wp_user = Config.WORDPRESS_USER
     wp_pass = Config.WORDPRESS_PASSWORD
     wp_url = Config.WORDPRESS_URL
@@ -192,16 +309,14 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"⚠️ خطای آپلود: {str(e)}")
 
-    # send product
-    if "step" in context.user_data and context.user_data["step"] == "product":
+    # If the upload phase was active
+    if context.user_data.get("step") == "awaiting_images":
         data = context.user_data.get("data", {})
+        if "images" not in data:
+            data["images"] = []
         if media_url:
-            data["images"] = media_url
-        job_id = product_broker.publish(data)
-        await update.message.reply_text(f"✅ محصول نهایی ساخته شد. job_id={job_id}")
-        context.user_data.clear()
-        await show_main_menu(update)
-
+            data["images"].append(media_url)
+            await update.message.reply_text("📸 تصویر به گالری محصول اضافه شد. می‌تونی ادامه بدی یا «پایان» رو بفرستی.")
 
 # -------- MAIN --------
 if __name__ == "__main__":

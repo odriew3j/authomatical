@@ -32,14 +32,15 @@ while True:
 
     for stream_name, msgs in messages:
         for msg_id, fields in msgs:
-            # Convert bytes to str safely
-            fields = { (k.decode() if isinstance(k, bytes) else k):
-                       (v.decode() if isinstance(v, bytes) else v)
-                       for k, v in fields.items() }
+            fields = {
+                (k.decode() if isinstance(k, bytes) else k):
+                (v.decode() if isinstance(v, bytes) else v)
+                for k, v in fields.items()
+            }
             logging.info(f"Received job {msg_id}: {fields}")
     
             try:
-                #1. Manual fields
+                # 1. Manual fields
                 title = fields["title"]
                 price = float(fields.get("price", 0))
                 sale_price = float(fields.get("sale_price", 0)) if fields.get("sale_price") else None
@@ -48,15 +49,25 @@ while True:
                 tags = fields.get("tags", "").split(",") if fields.get("tags") else []
                 images = fields.get("images", "").split(",") if fields.get("images") else []
 
-                #2. Description generation and SEO with AI
-                description = product_builder.generate_description(
-                    title, fields.get("keywords", ""), fields.get("tone", "informative"), fields.get("audience", "general")
+                # 2. Generate all AI data
+                ai_output = product_builder.generate_full_product(
+                    title=title,
+                    price=price,
+                    sale_price=sale_price,
+                    category=category,
+                    brand=brand,
+                    tags=tags
                 )
-                description = clean_description(description)
 
-                seo_meta = product_builder.generate_seo(title, fields.get("keywords", ""))
-                
-                #3. Product Creation in WordPress
+                description = clean_description(ai_output.get("description", ""))
+                seo_meta = ai_output.get("seo", {})
+                hashtags = ai_output.get("hashtags", "")
+
+                # convert hashtags to tags
+                if hashtags:
+                    tags.extend([h.strip().lstrip("#") for h in hashtags.split(",") if h.strip()])
+
+                # 3. Product Creation in WordPress
                 product_id = wp_product.create_product(
                     title=title,
                     description=description,
@@ -66,14 +77,14 @@ while True:
                     brand=brand,
                     tags=tags,
                     images=images,
-                    meta_title=seo_meta["title"],
-                    meta_description=seo_meta["description"],
-                    keywords=seo_meta["keywords"]
+                    meta_title=seo_meta.get("title"),
+                    meta_description=seo_meta.get("description"),
+                    keywords=seo_meta.get("keywords")
                 )
 
-                logging.info(f"Created product: {title}, id={product_id}")
+                logging.info(f"✅ Created product: {title}, id={product_id}")
                 broker.ack(GROUP, msg_id)
 
             except Exception as e:
-                logging.error(f"Failed to process product job {msg_id}: {e}")
+                logging.error(f"❌ Failed to process product job {msg_id}: {e}")
                 broker.ack(GROUP, msg_id)
