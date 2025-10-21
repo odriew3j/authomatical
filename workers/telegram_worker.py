@@ -54,8 +54,6 @@ PRODUCT_STEPS = [
     ("title", "📦 نام محصول:"),
     ("price", "💰 قیمت محصول:"),
     ("sale_price", "💲 قیمت تخفیفی (اختیاری، اگر نداری بفرست -):"),
-    ("color", "🎨 رنگ محصول (اگر نمی‌خوای ثبت کنی فقط - بفرست):"),
-    ("stock", "📦 موجودی انبار (اگر نمی‌خوای ثبت کنی فقط - بفرست):"),
 ]
 
 ARTICLE_STEPS = [
@@ -124,7 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_main_menu(update)
         return
 
-    # --- Category selection mode ---
+    # --- category selection mode ---
     if context.user_data.get("step") == "category_selection":
         try:
             choice = int(normalize_digits(text))
@@ -132,7 +130,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 category_slug = CATEGORIES[choice - 1][1]
                 context.user_data["data"]["category"] = category_slug
 
-                # Go to the image upload stage
+                # Go to the step of uploading images
                 context.user_data["step"] = "awaiting_images"
                 context.user_data["data"]["images"] = []
                 await update.message.reply_text(
@@ -145,12 +143,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ لطفاً فقط عدد بفرست.")
         return
 
-    # --- حالت آپلود عکس ---
+    # --- photo upload mode ---
     if context.user_data.get("step") == "awaiting_images":
         if text == "پایان":
             data = context.user_data["data"]
 
-            # تولید متن و برند با AI
+            # Generate text and brand with AI
             ai_product = builder.generate_full_product(
                 title=data["title"],
                 price=data.get("price", 0),
@@ -159,7 +157,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             brand_name = ai_product.get("brand", "Generic")
 
-            # ساخت محصول
+            # Build the product
             product_data = {
                 "title": data["title"],
                 "description": ai_product["description"],
@@ -172,8 +170,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "meta_title": ai_product["seo"]["title"],
                 "meta_description": ai_product["seo"]["description"],
                 "keywords": ai_product["seo"]["keywords"],
-                "color": data.get("color") or "",
-                "stock_quantity": data.get("stock") or None,
             }
 
             wp_product = wp_module.create_product(**product_data)
@@ -190,7 +186,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ اگر آپلود تموم شده، کلمه «پایان» رو بفرست.")
         return
 
-    # --- Starting mode ---
+    # --- mode of starting the steps ---
     if "step" not in context.user_data:
         if text == "1":
             init_chain(context, "wordpress", WORDPRESS_STEPS)
@@ -210,15 +206,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     steps = context.user_data["steps"]
     key = steps[sub][0]
 
-    # Normalize inputs
+    # Normalize the price
     if key == "price" and text != "-":
         context.user_data["data"][key] = normalize_price(text)
     elif key == "sale_price" and text != "-":
         context.user_data["data"][key] = normalize_price(text)
-    elif key == "stock" and text != "-":
-        context.user_data["data"][key] = int(normalize_digits(text))
-    elif key == "color":
-        context.user_data["data"][key] = text if text != "-" else ""
     else:
         context.user_data["data"][key] = text if text != "-" else ""
 
@@ -244,7 +236,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update)
 
     elif step == "product":
-        # Show category
+        # Show categories
         msg = "📂 دسته‌بندی محصول را انتخاب کن:\n\n"
         for i, (name, slug) in enumerate(CATEGORIES, start=1):
             msg += f"{i}. {name}\n"
@@ -309,7 +301,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"⚠️ خطای آپلود: {str(e)}")
 
-    # If the upload phase was active
+    # If the upload stage was active
     if context.user_data.get("step") == "awaiting_images":
         data = context.user_data.get("data", {})
         if "images" not in data:
