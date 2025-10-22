@@ -22,7 +22,8 @@ class WordPressProductModule:
         keywords: Optional[str] = None,
         color: Optional[str] = None,
         stock_quantity: Optional[Union[int, str]] = None,
-        status: str = "publish"
+        status: str = "publish",
+        upload_images: bool = True
     ):
         # --- category ---
         categories = []
@@ -122,9 +123,12 @@ class WordPressProductModule:
                     continue
                 img = img.strip()
                 if img.startswith("http://") or img.startswith("https://"):
-                    images_payload.append({"src": img})
-                else:
-                    # treat as local file path
+                    if not upload_images:
+                        images_payload.append({"src": img})
+                        continue
+
+                if upload_images:
+                    # treat as local file path and upload
                     try:
                         abs_path = os.path.abspath(img)
                         with open(abs_path, "rb") as f:

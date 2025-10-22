@@ -3,6 +3,8 @@ import logging
 import requests
 import mimetypes
 import re
+from requests.auth import HTTPBasicAuth
+
 
 from telegram import Update
 from telegram.ext import CommandHandler, MessageHandler, filters, ContextTypes
@@ -260,6 +262,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = update.message.photo[-1]
         file = await photo.get_file()
         file_path = os.path.join(UPLOAD_DIR, f"{file.file_id}.jpg")
+        # print(file_path)
         await file.download_to_drive(file_path)
 
     elif update.message.document:
@@ -281,19 +284,31 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wp_pass = Config.WORDPRESS_PASSWORD
     wp_url = Config.WORDPRESS_URL
 
+    # print("WORDPRESS_USER: ", wp_user)
+    # print("WORDPRESS_PASSWORD: ", wp_pass)
+    # print("WORDPRESS_URL: ", wp_url)
+
     media_url = None
     if wp_user and wp_pass and wp_url:
         media_endpoint = f"{wp_url}/wp-json/wp/v2/media"
+        # print("media_endpoint: ", media_endpoint)
         mime_type, _ = mimetypes.guess_type(file_path)
         mime_type = mime_type or "application/octet-stream"
 
         try:
+            headers = {"User-Agent": "Mozilla/5.0"}
             with open(file_path, "rb") as f:
-                files = {"file": (os.path.basename(file_path), f, mime_type)}
-                resp = requests.post(media_endpoint, files=files, auth=(wp_user, wp_pass))
+                files = {"file": (os.path.basename(file_path), f, "image/jpeg")}
+                resp = requests.post(media_endpoint, files=files, auth=HTTPBasicAuth(wp_user, wp_pass), headers=headers)
+
+            #     print("files", files)
+            #     print("resp: ", resp)
+
+            # print(resp.status_code, resp.text)
 
             if resp.status_code in (200, 201):
                 media_data = resp.json()
+                print("media_data.get('source_url'): ", media_data.get("source_url"))
                 media_url = media_data.get("source_url")
                 await update.message.reply_text(f"🖼 تصویر در وردپرس آپلود شد: {media_url}")
             else:

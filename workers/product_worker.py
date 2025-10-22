@@ -40,7 +40,7 @@ while True:
             logging.info(f"Received job {msg_id}: {fields}")
     
             try:
-                # 1. Manual fields
+                # 1. Manual fieldsre
                 title = fields["title"]
                 price = float(fields.get("price", 0))
                 sale_price = float(fields.get("sale_price", 0)) if fields.get("sale_price") else None
@@ -79,7 +79,8 @@ while True:
                     images=images,
                     meta_title=seo_meta.get("title"),
                     meta_description=seo_meta.get("description"),
-                    keywords=seo_meta.get("keywords")
+                    keywords=seo_meta.get("keywords"),
+                    upload_images=False
                 )
 
                 logging.info(f"✅ Created product: {title}, id={product_id}")

@@ -7,18 +7,27 @@ class WordPressClient:
         self.auth = (Config.WORDPRESS_USER, Config.WORDPRESS_PASSWORD)
 
     def create_post(self, title, content, status="draft"):
+        headers = {"User-Agent": "Mozilla/5.0"}
         post_data = {"title": title, "content": content, "status": status}
         for attempt in range(Config.MAX_RETRIES):
             try:
-                res = requests.post(f"{Config.WORDPRESS_URL}/wp-json/wp/v2/posts", auth=self.auth, json=post_data, timeout=Config.TIMEOUT)
+                res = requests.post(
+                    f"{Config.WORDPRESS_URL}/wp-json/wp/v2/posts",
+                    auth=self.auth,
+                    headers=headers,
+                    json=post_data,
+                    timeout=Config.TIMEOUT
+                )
                 if res.status_code == 201:
                     return res.json()["id"]
-                else: log(f"[Retry {attempt+1}] WP post error: status={res.status_code}, body={res.text}")
+                else:
+                    log(f"[Retry {attempt+1}] WP post error: status={res.status_code}, body={res.text}")
             except requests.exceptions.RequestException as e:
                 log(f"[Retry {attempt+1}] WP request error: {type(e).__name__}: {e}")
-
             time.sleep(2)
         raise Exception("Failed to create post.")
+
+
 
     def upload_media(self, post_id, image_bytes, filename="featured.jpg"):
         files = {"file": (filename, image_bytes, "image/jpeg")}
