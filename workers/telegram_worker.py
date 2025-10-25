@@ -56,6 +56,7 @@ PRODUCT_STEPS = [
     ("title", "📦 نام محصول:"),
     ("price", "💰 قیمت محصول:"),
     ("sale_price", "💲 قیمت تخفیفی (اختیاری، اگر نداری بفرست -):"),
+    ("stock_quantity", "📦 موجودی انبار (چند عدد از این محصول داری؟):"),
 ]
 
 ARTICLE_STEPS = [
@@ -172,15 +173,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "meta_title": ai_product["seo"]["title"],
                 "meta_description": ai_product["seo"]["description"],
                 "keywords": ai_product["seo"]["keywords"],
+                "stock_quantity": data.get("stock_quantity", 0),
             }
 
             wp_product = wp_module.create_product(**product_data)
-            job_id = product_broker.publish(product_data)
+            # job_id = product_broker.publish(product_data)
 
-            await update.message.reply_text(
-                f"✅ محصول ساخته شد.\n📂 دسته: {data['category']}\n🏷 برند: {brand_name}\n"
-                f"📌 job_id={job_id}, wp_id={wp_product.get('id')}"
-            )
+            await update.message.reply_text(f"✅ محصول برای ساخت ارسال شد (wp_product={wp_product})")
 
             context.user_data.clear()
             await show_main_menu(update)
@@ -212,6 +211,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if key == "price" and text != "-":
         context.user_data["data"][key] = normalize_price(text)
     elif key == "sale_price" and text != "-":
+        context.user_data["data"][key] = normalize_price(text)
+    elif key == "stock_quantity" and text != "-":
         context.user_data["data"][key] = normalize_price(text)
     else:
         context.user_data["data"][key] = text if text != "-" else ""
@@ -257,12 +258,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -------- HANDLE FILE/PHOTO --------
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_path = None
+    media_url = None
 
+    # Receive photos from Telegram
     if update.message.photo:
         photo = update.message.photo[-1]
         file = await photo.get_file()
         file_path = os.path.join(UPLOAD_DIR, f"{file.file_id}.jpg")
-        # print(file_path)
         await file.download_to_drive(file_path)
 
     elif update.message.document:
@@ -280,35 +282,24 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"🖼 تصویر ذخیره شد: {os.path.basename(file_path)}")
 
+    # Direct upload to WordPress (Media Library)
     wp_user = Config.WORDPRESS_USER
     wp_pass = Config.WORDPRESS_PASSWORD
     wp_url = Config.WORDPRESS_URL
 
-    # print("WORDPRESS_USER: ", wp_user)
-    # print("WORDPRESS_PASSWORD: ", wp_pass)
-    # print("WORDPRESS_URL: ", wp_url)
-
-    media_url = None
     if wp_user and wp_pass and wp_url:
         media_endpoint = f"{wp_url}/wp-json/wp/v2/media"
-        # print("media_endpoint: ", media_endpoint)
         mime_type, _ = mimetypes.guess_type(file_path)
         mime_type = mime_type or "application/octet-stream"
 
         try:
             headers = {"User-Agent": "Mozilla/5.0"}
             with open(file_path, "rb") as f:
-                files = {"file": (os.path.basename(file_path), f, "image/jpeg")}
+                files = {"file": (os.path.basename(file_path), f, mime_type)}
                 resp = requests.post(media_endpoint, files=files, auth=HTTPBasicAuth(wp_user, wp_pass), headers=headers)
-
-            #     print("files", files)
-            #     print("resp: ", resp)
-
-            # print(resp.status_code, resp.text)
 
             if resp.status_code in (200, 201):
                 media_data = resp.json()
-                print("media_data.get('source_url'): ", media_data.get("source_url"))
                 media_url = media_data.get("source_url")
                 await update.message.reply_text(f"🖼 تصویر در وردپرس آپلود شد: {media_url}")
             else:
@@ -316,13 +307,12 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"⚠️ خطای آپلود: {str(e)}")
 
-    # If the upload stage was active
-    if context.user_data.get("step") == "awaiting_images":
-        data = context.user_data.get("data", {})
-        if "images" not in data:
-            data["images"] = []
-        if media_url:
-            data["images"].append(media_url)
+    # Add image to context.user_data for product
+    if context.user_data.get("step") == "awaiting_images" and media_url:
+        data = context.user_data.setdefault("data", {})
+        images = data.setdefault("images", [])
+        if media_url not in images:
+            images.append(media_url)
             await update.message.reply_text("📸 تصویر به گالری محصول اضافه شد. می‌تونی ادامه بدی یا «پایان» رو بفرستی.")
 
 # -------- MAIN --------

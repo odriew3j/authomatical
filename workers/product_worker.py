@@ -48,6 +48,11 @@ while True:
                 brand = fields.get("brand")
                 tags = fields.get("tags", "").split(",") if fields.get("tags") else []
                 images = fields.get("images", "").split(",") if fields.get("images") else []
+                stock_raw = fields.get("stock_quantity")
+                try:
+                    stock_quantity = int(stock_raw) if stock_raw not in (None, "", "None") else 0
+                except ValueError:
+                    stock_quantity = 0
 
                 # 2. Generate all AI data
                 ai_output = product_builder.generate_full_product(
@@ -80,6 +85,7 @@ while True:
                     meta_title=seo_meta.get("title"),
                     meta_description=seo_meta.get("description"),
                     keywords=seo_meta.get("keywords"),
+                    stock_quantity=stock_quantity,
                     upload_images=False
                 )
 
