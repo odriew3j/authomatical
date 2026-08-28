@@ -58,7 +58,6 @@ while True:
                 ai_output = product_builder.generate_full_product(
                     title=title,
                     price=price,
-                    sale_price=sale_price,
                     category=category,
                     brand=brand,
                     tags=tags

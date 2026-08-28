@@ -70,6 +70,7 @@ CATEGORIES = [
     ("عدسی طبی", "medical-lens"),
     ("عینک آفتابی زنانه", "women-sunglasses"),
     ("عینک آفتابی مردانه", "men-sunglasses"),
+    ("عینک آفتابی بچه", "kids-sunglasses"),
     ("عینک اسپرت", "sports-glasses"),
     ("عینک پلاریزه", "polarized-glasses"),
     ("عینک طبی", "medical-glasses"),
@@ -154,8 +155,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Generate text and brand with AI
             ai_product = builder.generate_full_product(
                 title=data["title"],
-                price=data.get("price", 0),
-                sale_price=data.get("sale_price") or None,
                 category=data.get("category")
             )
             brand_name = ai_product.get("brand", "Generic")
