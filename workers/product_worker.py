@@ -1,14 +1,14 @@
 import logging
 import re
 from messaging.redis_broker import RedisBroker
-from clients.openrouter_client import OpenRouterClient
+from clients.ninerouter_client import NineRouterClient
 from modules.wordpress_product import WordPressProductModule
 from services.product_builder import ProductBuilder
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
 broker = RedisBroker(stream="product_jobs")
-ai_service = OpenRouterClient()
+ai_service = NineRouterClient()
 wp_product = WordPressProductModule()
 product_builder = ProductBuilder()
 

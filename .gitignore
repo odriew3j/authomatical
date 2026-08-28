@@ -2,4 +2,7 @@ venv/
 __pycache__/
 *.pyc
 .env
-.zip
+*.db
+*.sqlite3
+uploads/
+*.zip

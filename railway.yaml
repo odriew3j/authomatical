@@ -18,3 +18,14 @@ services:
       - WORDPRESS_URL
       - MAX_RETRIES
       - TIMEOUT
+
+  worker_bale:
+    build: .
+    start: python workers/bale_worker.py
+    env:
+      - BALE_BOT_TOKEN
+      - WORDPRESS_USER
+      - WORDPRESS_PASSWORD
+      - WORDPRESS_URL
+      - MAX_RETRIES
+      - TIMEOUT

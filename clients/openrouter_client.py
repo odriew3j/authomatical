@@ -5,7 +5,8 @@ class OpenRouterClient:
     BASE = "https://openrouter.ai/api/v1"
 
     def __init__(self, api_key=None, verify_ssl=True):
-        self.api_key = api_key or Config.OPENROUTER_API_KEY
+        # self.api_key = api_key or Config.OPENROUTER_API_KEY
+        self.api_key = api_key or Config.NINEROUTER_API_KEY
         self.verify_ssl = verify_ssl
         self.headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
