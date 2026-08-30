@@ -107,7 +107,10 @@ Required JSON structure (exactly these keys):
 }}
 """
 
-        res = self.client.chat(
+        # Lazily construct the configured AI client on the first article
+        # job. This keeps worker imports lightweight without ever leaving
+        # ``self.client`` as None when generation actually begins.
+        res = self._get_client().chat(
             [{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=0.4,

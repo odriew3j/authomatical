@@ -64,3 +64,30 @@ def test_article_build_structure_raises_on_unparsable_content():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_article_builder_lazily_creates_its_default_client_before_chat(monkeypatch):
+    """Regression test for a lazy client being constructed but then bypassed
+    by a stale `self.client.chat(...)` call in build_structure."""
+    fake_client = type("FakeClient", (), {})()
+    fake_client.chat = lambda *a, **k: {
+        "model": "test",
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"content": '{"title":"t","chapters":[]}'},
+        }],
+    }
+    created = []
+
+    def make_client():
+        created.append(True)
+        return fake_client
+
+    monkeypatch.setattr("services.article_builder.OpenRouterClient", make_client)
+    builder = ArticleBuilder()
+
+    result = builder.build_structure(keywords="test")
+
+    assert result == {"title": "t", "chapters": []}
+    assert created == [True]
+    assert builder.client is fake_client
