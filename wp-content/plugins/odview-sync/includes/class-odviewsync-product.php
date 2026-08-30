@@ -61,6 +61,20 @@ class ODviewSync_Product {
 
         $product->set_status('publish');
 
+        // Force an ASCII/English slug. WordPress happily accepts non-Latin
+        // permalinks, which is exactly why a Persian product title used to
+        // end up as a Persian URL. The Python side is expected to send an
+        // already-English, already-unique-ish slug (AI-generated, with a
+        // short random suffix appended); this is still a defensive check:
+        // if `slug` is missing or sanitize_title() strips it down to
+        // nothing (e.g. it was Persian after all), fall back to a purely
+        // ASCII generated one so the link is never accidentally Persian.
+        $slug = !empty($data['slug']) ? sanitize_title($data['slug']) : '';
+        if ($slug === '' || preg_match('/[^\x20-\x7E]/', $slug)) {
+            $slug = 'product-' . substr(md5(uniqid('', true)), 0, 8);
+        }
+        $product->set_slug($slug);
+
         // Save first so we have a product ID (required before setting terms/meta)
         $product_id = $product->save();
 
@@ -124,6 +138,7 @@ class ODviewSync_Product {
         return [
             'success'    => true,
             'product_id' => $product_id,
+            'url'        => get_permalink($product_id),
             'edit_url'   => admin_url('post.php?post=' . $product_id . '&action=edit'),
         ];
     }

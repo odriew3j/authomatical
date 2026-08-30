@@ -73,10 +73,16 @@ WORDPRESS_STEPS = [
 
 PRODUCT_STEPS = [
     ("title", "📦 نام محصول:"),
+    ("product_type", "🏷 این محصول از چه نوعیه؟ (مثلاً: عینک، ساعت، ادکلن، کیف، ...)\nاین به هوش مصنوعی کمک می‌کنه توضیحات واقعی و درست بنویسه، نه چرت‌وپرت کلی."),
+    ("user_notes", "📝 اگر مشخصات یا نکته‌ی خاصی درباره‌ی این محصول هست بنویس (جنس، رنگ، ویژگی فنی و ...).\nاگر چیزی نداری، فقط بفرست: x"),
     ("price", "💰 قیمت محصول:"),
     ("sale_price", "💲 قیمت تخفیفی (اختیاری، اگر نداری بفرست -):"),
     ("stock_quantity", "📦 موجودی انبار (چند عدد از این محصول داری؟):"),
 ]
+
+# Keys the user is explicitly allowed to skip by sending "x" (in addition
+# to the existing "-" convention used for numeric fields).
+SKIPPABLE_WITH_X = {"user_notes"}
 
 ARTICLE_STEPS = [
     ("keywords", "📝 موضوع مقاله رو وارد کن:"),
@@ -223,16 +229,41 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             data = context.user_data["data"]
 
-            # Generate text and brand with AI (tenant-agnostic AI service)
-            ai_product = builder.generate_full_product(
-                title=data["title"],
-                category=data.get("category")
-            )
+            # Generate text and brand with AI (tenant-agnostic AI service).
+            # NineRouter (local multi-backend gateway) can occasionally
+            # fail after retries — e.g. it routed to a slow reasoning
+            # model that got truncated before producing valid JSON. Catch
+            # that here so the user gets a clear message and can just
+            # send "پایان" again, instead of the update silently dying
+            # with no reply (which is what happened before this guard —
+            # PTB just logs "No error handlers are registered").
+            try:
+                await update.message.reply_text(
+                    "🤖 در حال پردازش با هوش مصنوعی هستم...\n"
+                    "⏳ این عملیات ممکن است حدود ۱ دقیقه زمان ببرد، لطفاً منتظر بمانید."
+                )
+
+                ai_product = builder.generate_full_product(
+                    title=data["title"],
+                    category=data.get("category"),
+                    product_type=data.get("product_type", ""),
+                    user_notes=data.get("user_notes", ""),
+                )
+
+            except Exception as e:
+                logging.error(f"AI product generation failed: {e}")
+                await update.message.reply_text(
+                    "⚠️ سرویس هوش مصنوعی موقتاً پاسخ نداد. "
+                    "لطفاً چند لحظه دیگر «پایان» رو دوباره بفرست."
+                )
+                return
+
             brand_name = ai_product.get("brand", "Generic")
 
             payload = {
                 "title": data["title"],
                 "description": ai_product["description"],
+                "slug": ai_product.get("slug"),  # always English/ASCII + unique, see product_builder.py
                 "price": data.get("price", 0),
                 "sale_price": data.get("sale_price") or None,
                 "category": data.get("category"),
@@ -247,7 +278,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             try:
                 result = site.create_product(payload)
-                await update.message.reply_text(f"✅ محصول روی سایتت ساخته شد (product_id={result.get('product_id')})")
+                msg = f"✅ محصول روی سایتت ساخته شد."
+                if result.get("url"):
+                    msg += f"\n🔗 {result['url']}"
+                await update.message.reply_text(msg)
             except SiteConnectorError as e:
                 await update.message.reply_text(f"⚠️ ساخت محصول ناموفق بود: {e}")
 
@@ -294,6 +328,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if key in ("price", "sale_price", "stock_quantity") and text != "-":
         context.user_data["data"][key] = normalize_price(text)
+    elif key in SKIPPABLE_WITH_X and text.strip().lower() in ("x", "-"):
+        context.user_data["data"][key] = ""
     else:
         context.user_data["data"][key] = text if text != "-" else ""
 
@@ -306,15 +342,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data["data"]
 
     if step == "article":
+        conn = await require_connection(update, context)
+        if not conn:
+            return
+
         job_data = {
             "keywords": data["keywords"],
             "chapters": "5",
             "max_words": "500",
             "tone": "informative",
-            "audience": "general"
+            "audience": "general",
+
+            "platform": get_platform(context),
+            "chat_id": str(update.effective_chat.id),
         }
-        job_id = article_broker.publish(job_data)
-        await update.message.reply_text(f"✅ مقاله ثبت شد. job_id={job_id}")
+
+        try:
+            job_id = article_broker.publish(job_data)
+        except RuntimeError as e:
+            # Redis down/unreachable — this used to bubble up as a raw
+            # unhandled ConnectionError caught only by the generic error
+            # handler; give a specific, actionable message instead.
+            logging.error(f"Failed to publish article job: {e}")
+            await update.message.reply_text(
+                "⚠️ صف پردازش پیام (Redis) در دسترس نیست. لطفاً بعداً دوباره امتحان کن."
+            )
+            reset_flow(context)
+            await show_main_menu(update, context)
+            return
+
+        await update.message.reply_text(
+            "🤖 مقاله وارد مرحله پردازش با هوش مصنوعی شد.\n"
+            "⏳ این عملیات ممکن است حدود ۱ دقیقه زمان ببرد، لطفاً منتظر بمانید."
+        )
+
         reset_flow(context)
         await show_main_menu(update, context)
 
@@ -370,36 +431,26 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     file_path = None
 
+    # Bale's file_id looks like "2141709305:-2821908970244137214:1:d71a...",
+    # which contains colons — invalid in a Windows filename/path (this was
+    # crashing download_to_drive() with "OSError: [Errno 22] Invalid
+    # argument" on Windows). We never need the file_id as a filename, so
+    # just generate a safe random one instead.
     if update.message.photo:
         photo = update.message.photo[-1]
         file = await photo.get_file()
-
-        file_path = os.path.join(
-            UPLOAD_DIR,
-            f"{uuid.uuid4().hex}.jpg"
-        )
-
+        file_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4().hex}.jpg")
         await file.download_to_drive(file_path)
 
     elif update.message.document:
         doc = update.message.document
-
         if not doc.mime_type or not doc.mime_type.startswith("image/"):
             await update.message.reply_text("⚠️ فقط فایل تصویری مجاز است.")
             return
-
         file = await doc.get_file()
-
-        ext = os.path.splitext(doc.file_name or "")[-1].lower()
-
-        if not ext:
-            ext = ".jpg"
-
-        file_path = os.path.join(
-            UPLOAD_DIR,
-            f"{uuid.uuid4().hex}{ext}"
-        )
-
+        ext = os.path.splitext(doc.file_name or "")[-1]
+        ext = ext if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", ext or "") else ".jpg"
+        file_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4().hex}{ext}")
         await file.download_to_drive(file_path)
 
     if not file_path:
@@ -426,6 +477,22 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("📸 تصویر به گالری محصول اضافه شد. می‌تونی ادامه بدی یا «پایان» رو بفرستی.")
 
 
+async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
+    """Safety net for anything not already caught closer to the source
+    (e.g. a DB hiccup, an unexpected SiteConnectorError). Without this,
+    python-telegram-bot just logs 'No error handlers are registered' and
+    the user sees nothing at all — which is exactly what was happening
+    before this was added."""
+    logging.error(f"Unhandled error while processing update: {context.error}", exc_info=context.error)
+    try:
+        if isinstance(update, Update) and update.effective_message:
+            await update.effective_message.reply_text(
+                "⚠️ یه خطای غیرمنتظره پیش اومد. لطفاً دوباره امتحان کن یا با «back» برگرد."
+            )
+    except Exception:
+        pass  # don't let a failure in the error handler itself crash anything
+
+
 def register_handlers(client, platform: str):
     """Wire the shared handlers onto any client exposing add_handler() and
     .app (both TelegramClient and BaleClient implement this). `platform`
@@ -437,3 +504,4 @@ def register_handlers(client, platform: str):
     client.add_handler(CommandHandler("start", start))
     client.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     client.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_file))
+    client.app.add_error_handler(on_error)

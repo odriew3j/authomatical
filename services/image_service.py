@@ -1,4 +1,6 @@
 from clients.ninerouter_client import NineRouterClient
+from clients.openrouter_client import OpenRouterClient
+
 
 class ImageService:
     def __init__(self):

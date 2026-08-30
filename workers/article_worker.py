@@ -6,6 +6,9 @@ from services.image_service import ImageService
 from modules.wordpress_article import WordPressArticleModule
 from modules.wordpress_steps import WordPressSteps
 
+from clients.bale_client import BaleClient
+from clients.telegram_client import TelegramClient
+
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
 # Worker setup
@@ -50,7 +53,13 @@ def process_chain(msg_id, fields):
                 chapters = int(fields.get("chapters", 5))
                 tone = fields.get("tone", "informative")
                 audience = fields.get("audience", "general")
-                max_tokens = int(fields.get("max_words", 500)) * chapters
+                # words != tokens, and the HTML/JSON wrapper (chapter titles,
+                # <p> tags, field names) costs tokens too — 1 word/token was
+                # starving generations, causing finish_reason="length" and
+                # truncated/unparsable JSON. ~1.5 tokens per requested word,
+                # times chapters, with a 3000-token floor.
+                requested_words = int(fields.get("max_words", 500))
+                max_tokens = max(3000, int(requested_words * chapters * 1.5))
 
                 article = article_builder.build_structure(
                     keywords=keywords,
@@ -99,8 +108,13 @@ def process_chain(msg_id, fields):
                 delete_temp_article(msg_id)
 
             elif step == WordPressSteps.ACKNOWLEDGE:
+                send_success_message(fields)
+
                 broker.ack(GROUP, msg_id)
-                logging.info(f"[{msg_id}] ✅ Completed successfully")
+
+                logging.info(
+                    f"[{msg_id}] ✅ Completed successfully"
+                )
 
         except Exception as e:
             logging.error(f"[{msg_id}] ❌ Failed at step {step.value}: {e}")
@@ -108,12 +122,47 @@ def process_chain(msg_id, fields):
             break
 
 
-while True:
-    messages = broker.consume(GROUP, CONSUMER, block=5000, count=1)
-    if not messages:
-        continue
+def run_forever():
+    while True:
+        messages = broker.consume(GROUP, CONSUMER, block=5000, count=1)
+        if not messages:
+            continue
 
-    for stream_name, msgs in messages:
-        for msg_id, fields in msgs:
-            logging.info(f"Received job {msg_id}: {fields}")
-            process_chain(msg_id, fields)
+        for stream_name, msgs in messages:
+            for msg_id, fields in msgs:
+                logging.info(f"Received job {msg_id}: {fields}")
+                process_chain(msg_id, fields)
+
+
+def send_success_message(fields):
+    platform = fields.get("platform")
+    chat_id = fields.get("chat_id")
+
+    if not platform or not chat_id:
+        logging.warning("Cannot send success message: missing platform/chat_id")
+        return
+
+    try:
+        if platform == "bale":
+            client = BaleClient()
+        elif platform == "telegram":
+            client = TelegramClient()
+        else:
+            logging.warning("Unknown platform: %s", platform)
+            return
+
+        client.send_message(
+            chat_id=int(chat_id),
+            text="✅ مقاله با موفقیت ساخته و روی سایتت منتشر شد."
+        )
+
+    except Exception as e:
+        logging.error(
+            "Failed to send article success message: %s",
+            e,
+            exc_info=True,
+        )
+
+
+if __name__ == "__main__":
+    run_forever()

@@ -33,6 +33,16 @@ class ODviewSync_API {
             'callback' => [$this, 'upload_media'],
             'permission_callback' => ['ODviewSync_Auth', 'validate'],
         ]);
+
+        register_rest_route('odview/v1', '/create-post', [
+            'methods'  => 'POST',
+            'callback' => [$this, 'create_post'],
+            'permission_callback' => ['ODviewSync_Auth', 'validate'],
+        ]);
+    }
+
+    public function create_post(WP_REST_Request $req) {
+        return ODviewSync_Article::create($req->get_json_params());
     }
 
     public function ping(WP_REST_Request $req) {

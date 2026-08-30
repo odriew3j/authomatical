@@ -7,8 +7,25 @@ if os.environ.get("RAILWAY_ENVIRONMENT") is None:
 
 
 class Config:
-    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    # NineRouter: local multi-backend AI gateway (localhost:20128). It can
+    # route a request to any of several underlying models — some of those
+    # (e.g. reasoning models like deepseek-r1) burn tokens on <think>
+    # blocks before producing real content, and can get truncated. See
+    # NINEROUTER_MODEL below and clients/ninerouter_client.py for how
+    # that's handled.
     NINEROUTER_API_KEY = os.getenv("NINEROUTER_API_KEY")
+    # Their 9Router instance has a combo ("code-9router-combo") that fans
+    # requests out across several backends (a mix of Fallback/Round-Robin/
+    # Fusion strategies, including reasoning models like deepseek-r1).
+    # NineRouterClient already strips <think> blocks, retries on truncated/
+    # unparsable output, and logs finish_reason — so the combo is fine to
+    # use directly. Override with a pinned model (e.g. "bg/gpt-4o-mini")
+    # via .env if the combo proves too slow/unreliable in practice.
+    NINEROUTER_MODEL = os.getenv("NINEROUTER_MODEL", "code-9router-combo")
+
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+    OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+
     WORDPRESS_URL = os.getenv("WORDPRESS_URL")
     WORDPRESS_USER = os.getenv("WORDPRESS_USER")
     WORDPRESS_PASSWORD = os.getenv("WORDPRESS_PASSWORD")
@@ -17,8 +34,11 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     BALE_BOT_TOKEN = os.getenv("BALE_BOT_TOKEN")
     REDIS_URL = os.getenv("REDIS_URL")
-    MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
-    TIMEOUT = int(os.getenv("TIMEOUT", 30))
+    # Reasoning-capable backends behind NineRouter can genuinely take
+    # 30-90s; 30s was cutting real (non-stuck) generations off mid-flight.
+    # Keep MAX_RETRIES modest since each retry can itself take a minute+.
+    MAX_RETRIES = int(os.getenv("MAX_RETRIES", 2))
+    TIMEOUT = int(os.getenv("TIMEOUT", 120))
 
     # Multi-tenant storage: one DB row per (platform, chat_id) user, holding
     # their own connected WordPress/WooCommerce site — see database/.
@@ -26,6 +46,3 @@ class Config:
     # Encrypts stored site secrets at rest. Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     SECRET_KEY = os.getenv("SECRET_KEY")
-
-    MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
-    TIMEOUT = int(os.getenv("TIMEOUT", 30))

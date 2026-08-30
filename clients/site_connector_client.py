@@ -78,3 +78,15 @@ class SiteConnectorClient:
         except requests.RequestException as e:
             raise SiteConnectorError(f"ساخت محصول ناموفق بود: {e}")
         return self._handle(resp)
+
+    def create_post(self, payload: dict) -> dict:
+        try:
+            resp = requests.post(
+                f"{self.base_url}/create-post",
+                headers=self.headers,
+                json=payload,
+                timeout=Config.TIMEOUT,
+            )
+        except requests.RequestException as e:
+            raise SiteConnectorError(f"انتشار مقاله ناموفق بود: {e}")
+        return self._handle(resp)

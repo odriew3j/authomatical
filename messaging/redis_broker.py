@@ -10,7 +10,11 @@ class RedisBroker:
     def publish(self, data: dict):
         """Send message to Redis Stream"""
         data_bytes = {k: str(v).encode() for k, v in data.items()}
-        return self.redis.xadd(self.stream, data_bytes)
+        try:
+            return self.redis.xadd(self.stream, data_bytes)
+        except redis.exceptions.RedisError as e:
+            log(f"[Redis publish error] {e}")
+            raise RuntimeError(f"Redis is unavailable: {e}") from e
 
     def consume(self, group, consumer, block=5000, count=1):
         """Reading a message from a Redis Stream by converting bytes to str"""
