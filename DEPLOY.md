@@ -184,6 +184,8 @@ python -m pytest tests/test_migrations.py -q
 | خطای 403 یا «کلید امنیتی نامعتبر» | آدرس و secret افزونه را در گزینهٔ 1 دوباره وارد کنید. اگر secret در WordPress regenerate شده، اتصال قبلی معتبر نیست. |
 | خطای 404 افزونه | افزونهٔ ODview Sync را نصب/فعال کنید و URL ریشهٔ سایت را وارد کنید، نه `/wp-admin`. |
 | worker دائماً restart می‌شود | `docker compose logs <service>` را ببینید؛ معمولاً توکن bot، `OPENROUTER_API_KEY` یا `SECRET_KEY` ناقص است. |
+| `Name or service not known` یا `ConnectTimeout` در polling | اگر چند بار اول رخ دهد و بعد `200 OK` ببینید، اختلال موقت DNS/TLS بوده و worker خودکار retry می‌کند. اگر ادامه‌دار است، DNS/فایروال/VPN میزبان را بررسی کنید: `docker compose exec bale-worker getent hosts tapi.bale.ai` و برای تلگرام `docker compose exec telegram-worker getent hosts api.telegram.org`. زمان‌های `BOT_*` در `.env` قابل تنظیم‌اند. |
+| URLهای Bot API همراه token در لاگ قدیمی دیده می‌شوند | token را فوراً از BotFather (تلگرام) یا پنل بله regenerate/revoke کنید، سپس `.env` را به‌روزرسانی و workerها را recreate کنید. نسخهٔ فعلی URLهای موفق httpx را log نمی‌کند و formatter آن tokenها را redact می‌کند. |
 | migration اجرا نشد | `docker compose logs migrate` یا محلی `python -m alembic upgrade head` را اجرا کنید. |
 
 ## پشتیبان‌گیری

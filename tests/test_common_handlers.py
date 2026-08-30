@@ -88,3 +88,19 @@ def test_product_flow_includes_grounding_steps_and_allows_notes_to_be_skipped():
     keys = [key for key, _question in handlers.PRODUCT_STEPS]
     assert keys[:3] == ["title", "product_type", "user_notes"]
     assert "user_notes" in handlers.SKIPPABLE_WITH_X
+
+
+@pytest.mark.asyncio
+async def test_polling_transport_error_is_logged_once_without_another_reply_attempt(monkeypatch):
+    # PTB uses update=None for polling errors. The updater retries those
+    # itself; our application error handler must not log a duplicate traceback
+    # or attempt a sendMessage call over the same unavailable network.
+    transport_error = handlers.NetworkError("DNS lookup failed")
+    context = SimpleNamespace(error=transport_error)
+    warning = MagicMock()
+    monkeypatch.setattr(handlers.logger, "warning", warning)
+
+    await handlers.on_error(None, context)
+
+    warning.assert_called_once()
+    assert "polling will retry" in warning.call_args.args[0]

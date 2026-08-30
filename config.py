@@ -40,6 +40,18 @@ class Config:
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", 2))
     TIMEOUT = int(os.getenv("TIMEOUT", 120))
 
+    # Bot API transport settings are deliberately independent of the AI/site
+    # timeout above. python-telegram-bot otherwise defaults to a very short
+    # 5-second connect timeout, which makes transient container DNS/TLS delays
+    # look like fatal worker errors.
+    BOT_CONNECT_TIMEOUT = float(os.getenv("BOT_CONNECT_TIMEOUT", 30))
+    BOT_READ_TIMEOUT = float(os.getenv("BOT_READ_TIMEOUT", 30))
+    BOT_WRITE_TIMEOUT = float(os.getenv("BOT_WRITE_TIMEOUT", 30))
+    BOT_POOL_TIMEOUT = float(os.getenv("BOT_POOL_TIMEOUT", 10))
+    BOT_POLL_TIMEOUT = int(os.getenv("BOT_POLL_TIMEOUT", 30))
+    BOT_POLL_READ_TIMEOUT = float(os.getenv("BOT_POLL_READ_TIMEOUT", 45))
+    BOT_POLL_INTERVAL = float(os.getenv("BOT_POLL_INTERVAL", 1))
+
     # Multi-tenant storage: one DB row per (platform, chat_id) user, holding
     # their own connected WordPress/WooCommerce site — see database/.
     DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///authomatical.db")

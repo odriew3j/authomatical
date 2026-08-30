@@ -21,6 +21,7 @@ import uuid
 from typing import Optional
 
 from telegram import Update
+from telegram.error import NetworkError
 from telegram.ext import ContextTypes
 
 from services.product_builder import ProductBuilder
@@ -30,7 +31,7 @@ from database.db import init_db
 from database.repository import get_or_create_tenant, save_wp_connection, get_wp_connection
 from messaging.redis_broker import RedisBroker
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -479,19 +480,28 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
-    """Safety net for anything not already caught closer to the source
-    (e.g. a DB hiccup, an unexpected SiteConnectorError). Without this,
-    python-telegram-bot just logs 'No error handlers are registered' and
-    the user sees nothing at all — which is exactly what was happening
-    before this was added."""
-    logging.error(f"Unhandled error while processing update: {context.error}", exc_info=context.error)
+    """Report application errors without turning a transport blip into spam.
+
+    python-telegram-bot also invokes application error handlers for polling
+    transport failures, where ``update`` is ``None``. The polling loop already
+    retries those failures; logging a second full traceback (and attempting a
+    reply over the same broken network) only creates noisy duplicate logs.
+    """
+    error = context.error
+    if update is None or isinstance(error, NetworkError):
+        logger.warning("Bot API transport error; polling will retry: %s", error)
+        return
+
+    logger.error("Unhandled error while processing update: %s", error, exc_info=error)
     try:
         if isinstance(update, Update) and update.effective_message:
             await update.effective_message.reply_text(
                 "⚠️ یه خطای غیرمنتظره پیش اومد. لطفاً دوباره امتحان کن یا با «back» برگرد."
             )
     except Exception:
-        pass  # don't let a failure in the error handler itself crash anything
+        # A failure while delivering the fallback should not trigger another
+        # error-handler cycle.
+        logger.warning("Could not deliver the user-facing error message")
 
 
 def register_handlers(client, platform: str):

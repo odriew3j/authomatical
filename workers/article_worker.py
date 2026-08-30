@@ -16,8 +16,8 @@ from messaging.redis_broker import RedisBroker
 from modules.wordpress_steps import WordPressSteps
 from services.article_builder import ArticleBuilder
 from services.image_service import ImageService
+from utils.logging_utils import configure_worker_logging
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 # Client constructors are lazy, so module import does not require AI tokens or
@@ -183,6 +183,7 @@ def process_chain(msg_id, fields) -> bool:
 
 
 def run_forever():
+    configure_worker_logging()
     init_db()
     logger.info("Article Worker started. Waiting for jobs...")
     while True:
