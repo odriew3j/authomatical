@@ -1,44 +1,86 @@
+"""Redis Streams wrapper used by the bot and article worker."""
+import logging
+
 import redis
+
 from config import Config
 from utils.helpers import log
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_REDIS_URL = "redis://localhost:6379/0"
+
+
 class RedisBroker:
-    def __init__(self, stream="jobs"):
-        self.redis = redis.Redis.from_url(Config.REDIS_URL)
+    def __init__(self, stream="jobs", redis_client=None):
+        # Creating a redis-py client does not connect immediately.  A useful
+        # local default makes imports/test discovery safe while real command
+        # failures are handled in publish/consume/ack below.
+        self.redis = redis_client or redis.Redis.from_url(Config.REDIS_URL or DEFAULT_REDIS_URL)
         self.stream = stream
 
     def publish(self, data: dict):
-        """Send message to Redis Stream"""
-        data_bytes = {k: str(v).encode() for k, v in data.items()}
+        """Send one message to a Redis Stream.
+
+        Redis itself stores bytes.  Preserve byte values passed by legacy
+        callers instead of turning ``b'value'`` into the literal text
+        ``b'value'``; all normal Python values are encoded once.
+        """
+        data_bytes = {
+            str(key): value if isinstance(value, bytes) else str(value).encode()
+            for key, value in data.items()
+        }
         try:
             return self.redis.xadd(self.stream, data_bytes)
-        except redis.exceptions.RedisError as e:
-            log(f"[Redis publish error] {e}")
-            raise RuntimeError(f"Redis is unavailable: {e}") from e
+        except redis.exceptions.RedisError as exc:
+            log(f"[Redis publish error] {exc}")
+            raise RuntimeError(f"Redis is unavailable: {exc}") from exc
 
     def consume(self, group, consumer, block=5000, count=1):
-        """Reading a message from a Redis Stream by converting bytes to str"""
+        """Read messages for a consumer group, returning decoded fields.
+
+        An outage is transient and should not kill a worker process.  Return
+        an empty batch so the outer loop can wait and try again; publishing
+        still raises because the caller needs to tell the user their job was
+        not queued.
+        """
         try:
             self.redis.xgroup_create(self.stream, group, id="0", mkstream=True)
         except redis.exceptions.ResponseError:
+            # BUSYGROUP means the group already exists, which is expected.
             pass
-        try:
-            messages = self.redis.xreadgroup(group, consumer, {self.stream: ">"}, count=count, block=block)
-            # Convert bytes to str
-            converted = []
-            for stream_name, msgs in messages:
-                converted_msgs = []
-                for msg_id, fields in msgs:
-                    converted_fields = {k.decode(): v.decode() for k, v in fields.items()}
-                    converted_msgs.append((msg_id, converted_fields))
-                converted.append((stream_name, converted_msgs))
-            return converted
-        except redis.exceptions.RedisError as e:
-            log(f"[Redis consume error] {e}")
+        except redis.exceptions.RedisError as exc:
+            log(f"[Redis consumer-group error] {exc}")
             return []
 
-    def ack(self, group, msg_id):
+        try:
+            messages = self.redis.xreadgroup(
+                group,
+                consumer,
+                {self.stream: ">"},
+                count=count,
+                block=block,
+            )
+            converted = []
+            for stream_name, msgs in messages:
+                converted_fields = []
+                for msg_id, fields in msgs:
+                    readable_fields = {
+                        key.decode() if isinstance(key, bytes) else str(key):
+                        value.decode() if isinstance(value, bytes) else str(value)
+                        for key, value in fields.items()
+                    }
+                    converted_fields.append((msg_id, readable_fields))
+                converted.append((stream_name, converted_fields))
+            return converted
+        except redis.exceptions.RedisError as exc:
+            log(f"[Redis consume error] {exc}")
+            return []
+
+    def ack(self, group, msg_id) -> bool:
         try:
             self.redis.xack(self.stream, group, msg_id)
-        except redis.exceptions.RedisError as e:
-            log(f"[Redis ack error] {e}")
+            return True
+        except redis.exceptions.RedisError as exc:
+            log(f"[Redis ack error] {exc}")
+            return False

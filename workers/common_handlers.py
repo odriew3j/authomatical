@@ -35,8 +35,9 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-init_db()  # create tables on first import if they don't exist yet
-
+# Database initialization happens when a bot is registered rather than at
+# module-import time. That avoids surprise local database files during test
+# discovery while retaining the same startup behaviour for both bot workers.
 article_broker = RedisBroker(stream="article_jobs")
 
 builder = ProductBuilder()
@@ -500,6 +501,7 @@ def register_handlers(client, platform: str):
     tell which platform it's running on for tenant resolution."""
     from telegram.ext import CommandHandler, MessageHandler, filters
 
+    init_db()
     client.app.bot_data["platform"] = platform
     client.add_handler(CommandHandler("start", start))
     client.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

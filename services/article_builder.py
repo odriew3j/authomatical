@@ -11,8 +11,16 @@ logger = logging.getLogger(__name__)
 class ArticleBuilder:
 
     def __init__(self, client=None):
-        # self.client = client or NineRouterClient()
-        self.client = client or OpenRouterClient()
+        # Delay API-key validation until generation is actually requested.
+        # That keeps worker imports and test discovery independent of a live
+        # OpenRouter configuration while preserving the same runtime client.
+        self.client = client
+
+    def _get_client(self):
+        if self.client is None:
+            # self.client = NineRouterClient()
+            self.client = OpenRouterClient()
+        return self.client
 
     # Shared with ProductBuilder's approach: tolerant of <think> blocks,
     # markdown fences, and prose wrapped around the JSON object.

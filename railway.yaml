@@ -1,31 +1,50 @@
+# Railway deployment reference. Provision/link PostgreSQL and Redis in Railway,
+# then set the listed variables on the corresponding service. Docker Compose
+# (documented in DEPLOY.md) remains the easiest all-in-one local deployment.
 services:
   web:
     build: .
-    start: waitress-serve --port=$PORT services.web_app:app
+    start: gunicorn services.web_app:app --bind 0.0.0.0:$PORT
     env:
-      - WORDPRESS_USER
-      - WORDPRESS_PASSWORD
-      - WORDPRESS_URL
-      - MAX_RETRIES
-      - TIMEOUT
+      - DATABASE_URL
+      - REDIS_URL
 
   worker_article:
     build: .
-    start: python workers/article_worker.py
+    start: python -m workers.article_worker
     env:
-      - WORDPRESS_USER
-      - WORDPRESS_PASSWORD
-      - WORDPRESS_URL
+      - DATABASE_URL
+      - REDIS_URL
+      - SECRET_KEY
+      - OPENROUTER_API_KEY
+      - OPENROUTER_MODEL
+      - TELEGRAM_BOT_TOKEN
+      - BALE_BOT_TOKEN
+      - MAX_RETRIES
+      - TIMEOUT
+
+  worker_telegram:
+    build: .
+    start: python -m workers.telegram_worker
+    env:
+      - DATABASE_URL
+      - REDIS_URL
+      - SECRET_KEY
+      - OPENROUTER_API_KEY
+      - OPENROUTER_MODEL
+      - TELEGRAM_BOT_TOKEN
       - MAX_RETRIES
       - TIMEOUT
 
   worker_bale:
     build: .
-    start: python workers/bale_worker.py
+    start: python -m workers.bale_worker
     env:
+      - DATABASE_URL
+      - REDIS_URL
+      - SECRET_KEY
+      - OPENROUTER_API_KEY
+      - OPENROUTER_MODEL
       - BALE_BOT_TOKEN
-      - WORDPRESS_USER
-      - WORDPRESS_PASSWORD
-      - WORDPRESS_URL
       - MAX_RETRIES
       - TIMEOUT

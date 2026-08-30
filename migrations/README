@@ -1,0 +1,4 @@
+Single-database Alembic migrations for Authomatical.
+
+Run `python -m alembic upgrade head` after setting DATABASE_URL.  Do not edit
+an applied migration; create a new revision for every schema change.

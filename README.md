@@ -1,197 +1,62 @@
-# AutoContent & Product Worker for WooCommerce
+# Authomatical — ربات ساخت محصول و مقاله برای WordPress
 
-[![Python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
-[![Flask](https://img.shields.io/badge/flask-2.3.2-green)](https://flask.palletsprojects.com/)
-[![Redis](https://img.shields.io/badge/redis-7.0-orange)](https://redis.io/)
+Authomatical یک ربات چندکاربره برای **بله** و **تلگرام** است که محصول‌های WooCommerce و مقاله‌های WordPress را با کمک AI می‌سازد و منتشر می‌کند.
 
-**Author:** Mohammad Mousavi
-**Company:** Online Digital View
+هر کاربر سایت خودش را از طریق افزونهٔ همراه **ODview Sync** متصل می‌کند. اطلاعات اتصال هر سایت در PostgreSQL به‌صورت رمزنگاری‌شده ذخیره می‌شود؛ هیچ سایت یا secretای بین کاربران مشترک نیست.
 
----
+## قابلیت‌های اصلی
 
-## 🔹 Project Overview
+- اتصال امن سایت WordPress از داخل گفتگو، بدون ارسال رمز عبور wp-admin
+- ساخت محصول با مراحل «نوع محصول» و «توضیحات اختیاری» برای تولید محتوای فارسی دقیق‌تر
+- slug انگلیسی و یکتا برای محصول، با اعتبارسنجی هم در Python و هم در افزونهٔ WordPress
+- صف Redis برای مقاله‌ها و worker چندمستاجره که مقاله را فقط روی سایت همان کاربر منتشر می‌کند
+- پیام موفقیت یا خطا به همان چت بله/تلگرام پس از پایان کار
+- PostgreSQL + Alembic برای migrationهای قابل‌ردیابی؛ SQLite همچنان برای توسعهٔ سبک پشتیبانی می‌شود
+- Docker Compose برای PostgreSQL، Redis، migration و workerها
 
-This project is a **web-based automation system** for managing content and product publishing:
-
-1. **Article Generator:**
-
-   * Accepts keywords and parameters via a web form.
-   * Uses AI (OpenRouterClient) to generate article content and SEO meta.
-   * Publishes articles to WordPress automatically.
-
-2. **Product Publisher:**
-
-   * Accepts product details including title, price, category, tags, images, and keywords.
-   * Uses AI to generate product descriptions and SEO meta.
-   * Publishes products to WooCommerce/WordPress automatically.
-
-3. **Background Worker System:**
-
-   * Jobs are queued in Redis Streams.
-   * Dedicated Python workers consume the jobs and perform publishing tasks.
-   * Supports temporary storage in Redis for recovery.
-
-4. **Web Dashboard:**
-
-   * Flask app provides a dashboard to manage articles and products.
-   * Separate forms for article and product submissions.
-   * Displays queued job status.
-
----
-
-## 📂 Project Structure
-
-```
-authomatical/
-├── clients/              # API clients (WordPress, OpenRouter)
-├── messaging/            # Redis broker for queue management
-├── modules/              # Business logic modules (article, product)
-├── services/             # Flask web app
-│   ├── blueprints/       # Blueprint routes for articles/products
-│   └── templates/        # HTML templates for web forms
-├── utils/                # Helpers and utility functions
-├── workers/              # Background workers (article & product)
-├── venv/                 # Python virtual environment
-├── config.py             # Configuration (Redis, WordPress, etc.)
-├── app.py                # Flask app entry point
-├── requirements.txt
-└── README.md
-```
-
----
-
-## ⚡ Features
-
-* **AI-Powered Content Creation:** Automatically generate article/product descriptions and SEO metadata.
-* **WooCommerce Integration:** Direct publishing to WooCommerce products.
-* **Redis Queues:** Reliable job management with acknowledgment.
-* **Web Interface:** Submit new jobs for articles or products.
-* **Extensible Worker Architecture:** Easy to add new workers (e.g., for social media, emails, or other automations).
-
----
-
-## 🛠 Installation
-
-1. **Clone the repository:**
+## شروع سریع
 
 ```bash
-git clone https://github.com/odriew3j/authomatical.git
-cd authomatical
+cp .env.example .env
+# مقدارهای OPENROUTER_API_KEY، SECRET_KEY، POSTGRES_PASSWORD و توکن bot را در .env وارد کنید.
+docker compose --profile telegram up -d --build
+# یا: docker compose --profile bale up -d --build
 ```
 
-2. **Create virtual environment:**
+سپس افزونهٔ `wp-content/plugins/odview-sync` را روی سایت WordPress نصب/فعال کنید، در ربات `/start` بزنید و گزینهٔ `1` را برای اتصال سایت انتخاب کنید.
+
+راهنمای کامل Docker، اجرای محلی، نصب افزونه، migration، تست و رفع خطاها در **[DEPLOY.md](DEPLOY.md)** است.
+
+## تست
 
 ```bash
-python -m venv venv
-venv\Scripts\activate      # Windows
-source venv/bin/activate   # Linux / Mac
-```
-
-3. **Install dependencies:**
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+python -m pytest -q
 ```
 
-4. **Set up `.env` or `config.py`:**
+تست‌ها به سرویس خارجی یا Redis/WordPress واقعی نیاز ندارند.
 
-* Configure WordPress credentials: `WORDPRESS_USER`, `WORDPRESS_PASSWORD`, `WORDPRESS_URL`
-* Redis URL: `REDIS_URL`
-* AI client API key (OpenRouter or similar)
-* Optional: timeout, max retries, etc.
+## ساختار مهم پروژه
 
-5. **Start Redis Server** (if not running):
-
-```bash
-redis-server
+```text
+clients/        API clients (site connector, AI, notifications)
+database/       مدل‌ها، رمزنگاری و repository
+migrations/     Alembic migrations
+messaging/      Redis Streams wrapper
+workers/        bot workers و article worker
+services/       AI builders و داشبورد قدیمی (برای انتشار production استفاده نشود)
+wp-content/     افزونهٔ WordPress ODview Sync
+tests/          تست‌های unit و integration سبک
 ```
 
----
+## امنیت
 
-## 🚀 Running the Application
+- `.env` و کلیدهای API را commit نکنید.
+- `SECRET_KEY` را پس از ذخیره‌شدن اتصال سایت‌ها تغییر ندهید؛ در غیر این صورت secretهای قبلی قابل خواندن نخواهند بود.
+- secret نمایش‌داده‌شده در صفحهٔ «اتصال به بازو» WordPress معادل دسترسی انتشار از طریق ربات است؛ آن را خصوصی نگه دارید.
 
-### 1. Start Flask Web App
+## مجوز
 
-```bash
-python services/web_app.py
-```
-
-* Open `http://127.0.0.1:5000` to see the **dashboard**.
-* Navigate to **Articles** or **Products** to submit jobs.
-
-### 2. Start Workers
-
-#### Article Worker
-
-```bash
-python workers/article_worker.py
-```
-
-#### Product Worker
-
-```bash
-python workers/product_worker.py
-```
-
-> Workers will continuously listen to Redis Streams and process queued jobs.
-
----
-
-## 📝 Usage
-
-### Article Submission
-
-* Fields: keywords, chapters, max\_words, tone, audience
-* AI generates the content and SEO meta.
-* Article is published to WordPress automatically.
-
-### Product Submission
-
-* Fields: title, price, sale\_price, category, brand, tags, images, keywords, tone, audience
-* AI generates product description and SEO meta.
-* Product is published to WooCommerce automatically.
-
----
-
-## ⚙️ Configuration
-
-* **RedisBroker:** Redis Streams for job queueing
-* **WordPressClient:** Handles posts and media upload
-* **OpenRouterClient:** Generates AI content
-* **Workers:** Consume queued jobs and publish content
-* **Flask Blueprints:** `/articles` and `/products` for web forms
-
----
-
-## ✅ Best Practices
-
-* Always run workers separately from Flask server.
-* Keep WordPress credentials secure.
-* Use environment variables for sensitive information.
-* Validate job data before submission.
-* Optional: Monitor Redis streams to track failed jobs.
-
----
-
-## 📚 Future Enhancements
-
-* Add authentication for dashboard.
-* Add job status tracking.
-* Support for multiple WordPress/WooCommerce instances.
-* Integrate with social media posting.
-* Desktop client using PyQt/Tkinter or Electron.
-
----
-
-## 📄 License
-
-This project is licensed under the **MIT License** – free to use, modify, and distribute.
-Add a `LICENSE` file with the following:
-
-```
-MIT License
-
-Copyright (c) 2025 Mohammad Mousavi
-
-Permission is hereby granted, free of charge, to any person obtaining a copy...
-```
+MIT License — برای جزئیات [LICENSE](LICENSE) را ببینید.
