@@ -11,3 +11,4 @@ uploads/
 .coverage
 coverage/
 htmlcov/
+docker-compose.override.yml

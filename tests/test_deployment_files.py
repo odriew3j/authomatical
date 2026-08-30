@@ -24,3 +24,14 @@ def test_requirements_include_production_migration_dependencies():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     assert "alembic" in requirements
     assert "psycopg2-binary" in requirements
+
+
+def test_optional_docker_desktop_dns_override_is_available_without_hardcoding_it():
+    override = (ROOT / "docker-compose.dns.example.yml").read_text(encoding="utf-8")
+    ignored = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    for service in ("telegram-worker:", "bale-worker:", "article-worker:"):
+        assert service in override
+    assert "DOCKER_DNS_PRIMARY" in override
+    assert "DOCKER_DNS_SECONDARY" in override
+    assert "docker-compose.override.yml" in ignored

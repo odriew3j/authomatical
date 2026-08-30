@@ -99,6 +99,59 @@ docker compose down
 docker compose down -v
 ```
 
+### بازیابی Docker Desktop / DNS در Windows
+
+اگر هر دو worker خطای `Temporary failure in name resolution`، `Name or service not known` یا `RemoteProtocolError` می‌دهند، مسئله از اتصال خارجی/DNS Docker Desktop است، نه Redis یا PostgreSQL. این ترتیب را در **PowerShell** اجرا کنید. هیچ‌کدام از این دستورها volume دیتابیس را حذف نمی‌کند:
+
+```powershell
+# اگر دستور قبلی وسط کار cancel شده، شبکه و containerهای همین پروژه را تمیز متوقف کن.
+docker compose down --remove-orphans
+
+# Docker Desktop را از system tray کاملاً Quit کن، سپس در PowerShell اجرا کن:
+wsl --shutdown
+
+# Docker Desktop را دوباره باز کن و صبر کن تا وضعیت Engine Running شود.
+# سپس پروژه را دوباره بساز و اجرا کن:
+docker compose --profile telegram --profile bale up -d --build --force-recreate
+docker compose ps
+```
+
+`migrate` باید پس از migration با وضعیت `Exited (0)` دیده شود؛ این طبیعی است. `postgres` و `redis` باید `healthy` و workerها باید `running` باشند.
+
+ابتدا DNS خود Windows را چک کنید:
+
+```powershell
+Resolve-DnsName api.telegram.org
+Resolve-DnsName tapi.bale.ai
+Test-NetConnection api.telegram.org -Port 443
+Test-NetConnection tapi.bale.ai -Port 443
+```
+
+اگر Windows درست resolve می‌کند ولی containerها نه، از داخل container بررسی کنید:
+
+```powershell
+docker compose exec telegram-worker python -c "import socket; print(socket.gethostbyname('api.telegram.org'))"
+docker compose exec bale-worker python -c "import socket; print(socket.gethostbyname('tapi.bale.ai'))"
+```
+
+اگر هنوز خطا دارید، یک override اختیاری برای DNS Docker فعال کنید:
+
+```powershell
+Copy-Item docker-compose.dns.example.yml docker-compose.override.yml
+# در صورت نیاز، DNSهای مورد تأیید شبکهٔ خود را در .env با DOCKER_DNS_PRIMARY و DOCKER_DNS_SECONDARY تعیین کنید.
+docker compose --profile telegram --profile bale up -d --force-recreate
+```
+
+فایل `docker-compose.override.yml` محلی است و وارد Git نمی‌شود. اگر شبکهٔ سازمانی/VPN دارید، به‌جای DNS عمومی از DNS مورد تأیید همان شبکه استفاده کنید. می‌توانید همین تنظیم را در Docker Desktop از مسیر **Settings → Resources → Network / Docker Engine** نیز اعمال و سپس **Apply & Restart** کنید.
+
+برای دیدن log بدون باز ماندن دائمی terminal:
+
+```powershell
+docker compose logs --tail=100 telegram-worker bale-worker article-worker
+```
+
+`docker compose logs -f` فقط log را stream می‌کند؛ `Ctrl+C` در آن معمولاً containerها را متوقف نمی‌کند. اما `Ctrl+C` هنگام `up --force-recreate` ممکن است عملیات recreate را نیمه‌کاره بگذارد؛ در آن حالت دوباره از دستور `down --remove-orphans` بالا شروع کنید.
+
 ---
 
 ## ۴. اجرای محلی بدون Docker (برای توسعه)

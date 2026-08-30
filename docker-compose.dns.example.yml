@@ -1,0 +1,21 @@
+# Optional Docker Desktop DNS override.
+#
+# Use only when containers cannot resolve external Bot/API hosts while the
+# Windows host itself can. Copy this file to docker-compose.override.yml;
+# Docker Compose loads that filename automatically. Replace the default
+# resolvers with DNS servers approved by your network if necessary.
+#
+#   Copy-Item docker-compose.dns.example.yml docker-compose.override.yml
+#
+services:
+  telegram-worker:
+    dns: &external_dns
+      - ${DOCKER_DNS_PRIMARY:-1.1.1.1}
+      - ${DOCKER_DNS_SECONDARY:-8.8.8.8}
+
+  bale-worker:
+    dns: *external_dns
+
+  # The article worker needs external DNS too when it calls OpenRouter.
+  article-worker:
+    dns: *external_dns
