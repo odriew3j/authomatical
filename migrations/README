@@ -1,4 +1,7 @@
 Single-database Alembic migrations for Authomatical.
 
-Run `python -m alembic upgrade head` after setting DATABASE_URL.  Do not edit
-an applied migration; create a new revision for every schema change.
+Run `python -m alembic upgrade head` after setting `DATABASE_URL` and before
+starting bot/article workers. Do not edit an applied migration; create a new
+revision for every schema change. Revision `20260901_01` adds the durable
+Article request/attempt/result tables; Redis Stream data is not migrated or
+deleted by Alembic.

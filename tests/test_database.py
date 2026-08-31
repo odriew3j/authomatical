@@ -1,5 +1,10 @@
 import sqlite3
 
+from database.repository import (
+    ARTICLE_JOB_CLAIMED,
+    ARTICLE_JOB_TERMINAL,
+)
+
 
 def test_tenant_isolation_across_platforms(test_db):
     """Same numeric chat_id on telegram vs bale must never collide."""
@@ -52,3 +57,161 @@ def test_delete_wp_connection(test_db):
     assert test_db.delete_wp_connection(t) is True
     assert test_db.get_wp_connection(t) is None
     assert test_db.delete_wp_connection(t) is False  # already gone
+
+
+# -------- Durable Article job repository --------
+def test_article_job_persists_request_and_tenant_snapshot(test_db):
+    tenant_id = test_db.get_or_create_tenant("telegram", 111, "کاربر")
+
+    job_id = test_db.create_article_job(
+        tenant_id,
+        keywords="راهنمای انتخاب عینک",
+        article_type="راهنمای خرید",
+        notes="برای تازه‌کارها",
+        chapters="6",
+        max_words="700",
+        tone="friendly",
+        audience="new shoppers",
+        source="bot",
+    )
+
+    job = test_db.get_article_job(job_id, tenant_id=tenant_id)
+    assert job is not None
+    assert job["id"] == job_id
+    assert job["tenant_id"] == tenant_id
+    assert job["platform"] == "telegram"
+    assert job["chat_id"] == "111"
+    assert job["source"] == "bot"
+    assert job["keywords"] == "راهنمای انتخاب عینک"
+    assert job["article_type"] == "راهنمای خرید"
+    assert job["notes"] == "برای تازه‌کارها"
+    assert job["chapters"] == 6
+    assert job["max_words"] == 700
+    assert job["status"] == "PENDING"
+    assert job["requested_at"] is not None
+    assert job["attempts"] == []
+    assert job["results"] == []
+
+
+def test_article_job_tenant_scoped_reads_never_cross_tenants(test_db):
+    telegram_tenant = test_db.get_or_create_tenant("telegram", 111)
+    bale_tenant = test_db.get_or_create_tenant("bale", 111)
+    tg_job = test_db.create_article_job(telegram_tenant, keywords="موضوع تلگرام")
+    bale_job = test_db.create_article_job(bale_tenant, keywords="موضوع بله")
+
+    assert test_db.get_article_job(tg_job, tenant_id=bale_tenant) is None
+    assert test_db.get_article_job(bale_job, tenant_id=telegram_tenant) is None
+    assert [job["id"] for job in test_db.list_article_jobs(tenant_id=telegram_tenant)] == [tg_job]
+    assert [job["id"] for job in test_db.list_article_jobs(tenant_id=bale_tenant)] == [bale_job]
+
+
+def test_article_lifecycle_records_attempt_result_and_wordpress_outcome(test_db):
+    tenant_id = test_db.get_or_create_tenant("telegram", 222)
+    job_id = test_db.create_article_job(tenant_id, keywords="موضوع")
+
+    assert test_db.mark_article_job_queued(job_id, b"1710000000000-0") is True
+    claim = test_db.claim_pending_article_job(job_id)
+    assert claim.outcome == ARTICLE_JOB_CLAIMED
+    assert claim.job["id"] == job_id
+    assert claim.job["attempt_number"] == 1
+    assert claim.job["attempt_id"]
+
+    article = {
+        "title": "عنوان مقاله",
+        "slug": "article-title-123abc",
+        "subtitle": "زیرعنوان",
+        "introduction": "<p>مقدمه</p>",
+        "chapters": [{"title": "فصل اول", "content": "<p>متن</p>"}],
+        "conclusions": "<p>نتیجه</p>",
+        "imagePrompt": "editorial product photography",
+    }
+    result_id = test_db.save_article_result(
+        job_id, claim.job["attempt_id"], article, "<p>مقدمه</p>\n<h2>فصل اول</h2>"
+    )
+    assert result_id
+    assert test_db.mark_article_job_success(
+        job_id,
+        claim.job["attempt_id"],
+        wordpress_post_id="44",
+        wordpress_post_url="https://tenant.example/article-title-123abc",
+    ) is True
+
+    job = test_db.get_article_job(job_id)
+    assert job["status"] == "SUCCESS"
+    assert job["retry_count"] == 0
+    assert job["queue_message_id"] == "1710000000000-0"
+    assert job["queued_at"] is not None
+    assert job["started_at"] is not None
+    assert job["completed_at"] is not None
+    assert job["wordpress_post_id"] == 44
+    assert job["wordpress_post_url"].endswith("article-title-123abc")
+    assert len(job["attempts"]) == 1
+    attempt = job["attempts"][0]
+    assert attempt["id"] == claim.job["attempt_id"]
+    assert attempt["job_id"] == job_id
+    assert attempt["attempt_number"] == 1
+    assert attempt["status"] == "SUCCESS"
+    assert attempt["error_message"] is None
+    assert attempt["started_at"] is not None
+    assert attempt["completed_at"] is not None
+    assert job["results"][0]["attempt_id"] == claim.job["attempt_id"]
+    assert job["results"][0]["slug"] == "article-title-123abc"
+    assert job["results"][0]["chapters"] == article["chapters"]
+    assert job["results"][0]["image_prompt"] == "editorial product photography"
+    assert job["results"][0]["content_html"].startswith("<p>مقدمه")
+    assert test_db.claim_pending_article_job(job_id).outcome == ARTICLE_JOB_TERMINAL
+
+
+def test_article_failure_keeps_attempt_and_generated_result_for_audit(test_db):
+    tenant_id = test_db.get_or_create_tenant("bale", 333)
+    job_id = test_db.create_article_job(tenant_id, keywords="موضوع ناموفق")
+    claim = test_db.claim_pending_article_job(job_id)
+    assert claim.outcome == ARTICLE_JOB_CLAIMED
+
+    test_db.save_article_result(
+        job_id,
+        claim.job["attempt_id"],
+        {"title": "مقاله تولیدشده", "chapters": []},
+        "<p>محتوا</p>",
+    )
+    assert test_db.mark_article_job_failed(
+        job_id,
+        "WordPress rejected the post: X-ODVIEW-SECRET=top-secret",
+        attempt_id=claim.job["attempt_id"],
+    ) is True
+
+    job = test_db.get_article_job(job_id)
+    assert job["status"] == "FAILED"
+    assert job["completed_at"] is not None
+    assert job["attempts"][0]["status"] == "FAILED"
+    assert "top-secret" not in job["error_message"]
+    assert job["results"][0]["title"] == "مقاله تولیدشده"
+    # Terminal failures are deliberately not auto-claimed into a retry.
+    assert test_db.claim_pending_article_job(job_id).outcome == ARTICLE_JOB_TERMINAL
+
+
+def test_article_queue_failure_is_durable_without_fabricating_worker_attempt(test_db):
+    tenant_id = test_db.get_or_create_tenant("telegram", 404)
+    job_id = test_db.create_article_job(tenant_id, keywords="صف در دسترس نیست")
+
+    assert test_db.mark_article_job_failed(job_id, "Redis queue publish failed: down") is True
+    job = test_db.get_article_job(job_id)
+    assert job["status"] == "FAILED"
+    assert "Redis queue publish failed" in job["error_message"]
+    assert job["attempts"] == []
+    assert job["results"] == []
+
+
+def test_article_job_creation_rejects_unknown_tenant_and_empty_keywords(test_db):
+    tenant_id = test_db.get_or_create_tenant("telegram", 444)
+    try:
+        test_db.create_article_job(99999, keywords="موضوع")
+        assert False, "expected an unknown tenant error"
+    except ValueError as exc:
+        assert "does not exist" in str(exc)
+
+    try:
+        test_db.create_article_job(tenant_id, keywords="  ")
+        assert False, "expected empty keywords error"
+    except ValueError as exc:
+        assert "keywords" in str(exc)

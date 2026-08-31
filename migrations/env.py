@@ -12,7 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import Config
 from database.db import Base
-from database import models  # noqa: F401 -- register Tenant/WPConnection on Base
+from database import models  # noqa: F401 -- register all ORM models on Base
 
 config = context.config
 

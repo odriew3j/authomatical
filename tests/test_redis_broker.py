@@ -11,7 +11,7 @@ def test_publish_encodes_regular_values_once_and_preserves_bytes():
     client.xadd.return_value = b"1-0"
     broker = RedisBroker(stream="articles", redis_client=client)
 
-    assert broker.publish({"title": "متن", "already_bytes": b"raw", "count": 3}) == b"1-0"
+    assert broker.publish({"title": "متن", "already_bytes": b"raw", "count": 3}) == "1-0"
     client.xadd.assert_called_once_with(
         "articles",
         {"title": "متن".encode(), "already_bytes": b"raw", "count": b"3"},
@@ -37,7 +37,7 @@ def test_consume_decodes_fields_and_tolerates_existing_group():
 
     messages = broker.consume("group", "consumer")
 
-    assert messages == [(b"article_jobs", [(b"1-0", {"keywords": "مقاله", "chapters": "5"})])]
+    assert messages == [("article_jobs", [("1-0", {"keywords": "مقاله", "chapters": "5"})])]
 
 
 def test_consume_and_ack_do_not_kill_worker_on_redis_error():

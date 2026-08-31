@@ -31,6 +31,52 @@ def test_list_tenants_returns_repository_data(client, monkeypatch):
     assert resp.get_json()[0]["site_url"] == "https://shop.example"
 
 
+def test_article_dashboard_reads_durable_history_not_redis(client, monkeypatch):
+    monkeypatch.setattr(web_app_module, "init_db", lambda: None)
+    monkeypatch.setattr(
+        web_app_module,
+        "list_article_jobs",
+        lambda limit: [{
+            "id": 71,
+            "tenant_id": 7,
+            "keywords": "موضوع پایدار",
+            "article_type": "آموزشی",
+            "notes": "نکته",
+            "status": "SUCCESS",
+            "requested_at": "2026-09-01T10:00:00",
+            "completed_at": "2026-09-01T10:01:00",
+        }],
+    )
+    redis = MagicMock()
+    monkeypatch.setattr(web_app_module.article_broker, "redis", redis)
+
+    resp = client.get("/api/jobs/article")
+
+    assert resp.status_code == 200
+    assert resp.get_json() == [{
+        "id": "71",
+        "tenant_id": 7,
+        "status": "SUCCESS",
+        "requested_at": "2026-09-01T10:00:00",
+        "completed_at": "2026-09-01T10:01:00",
+        "data": {"keywords": "موضوع پایدار", "article_type": "آموزشی", "notes": "نکته"},
+    }]
+    redis.xrevrange.assert_not_called()
+
+
+def test_article_dashboard_never_deletes_or_requeues_legacy_redis_entries(client, monkeypatch):
+    redis = MagicMock()
+    monkeypatch.setattr(web_app_module.article_broker, "redis", redis)
+
+    delete_response = client.post("/api/jobs/article/delete/legacy-1")
+    requeue_response = client.post("/api/jobs/article/requeue/legacy-1")
+
+    assert delete_response.status_code == 409
+    assert requeue_response.status_code == 409
+    redis.xdel.assert_not_called()
+    redis.xrange.assert_not_called()
+
+
 # -------------------- /products/publish_product --------------------
 
 def test_publish_product_requires_tenant_id(client):
@@ -182,9 +228,11 @@ def test_tenant_categories_endpoint(client, monkeypatch):
 def test_publish_article_requires_tenant_id_and_keywords(client):
     resp = client.post("/articles/publish_article", json={"keywords": "test"})
     assert resp.status_code == 400
+    assert "tenant_id" in resp.get_json()["message"]
 
     resp = client.post("/articles/publish_article", json={"tenant_id": 1})
     assert resp.status_code == 400
+    assert "مقاله" in resp.get_json()["message"]
 
 
 def test_publish_article_rejects_unconnected_tenant(client, monkeypatch):
@@ -196,13 +244,31 @@ def test_publish_article_rejects_unconnected_tenant(client, monkeypatch):
     assert "وصل نکرده" in resp.get_json()["message"]
 
 
-def test_publish_article_queues_job_with_tenant_id_and_grounding_fields(client, monkeypatch):
+def test_publish_article_persists_then_queues_only_durable_job_id(client, monkeypatch):
     monkeypatch.setattr(
-        article_module, "get_wp_connection",
+        article_module,
+        "get_wp_connection",
         lambda tenant_id: {"site_url": "https://tenant.example", "secret": "s3cr3t"},
     )
     fake_broker = MagicMock()
-    fake_broker.publish.return_value = b"1-0"
+    events = []
+
+    def publish(payload):
+        events.append(("publish", payload))
+        return "1710000000000-0"
+
+    fake_broker.publish.side_effect = publish
+
+    def create_job(tenant_id, **kwargs):
+        events.append(("create", tenant_id, kwargs))
+        return 91
+
+    def mark_queued(job_id, queue_message_id):
+        events.append(("queued", job_id, queue_message_id))
+        return True
+
+    monkeypatch.setattr(article_module, "create_article_job", create_job)
+    monkeypatch.setattr(article_module, "mark_article_job_queued", mark_queued)
     monkeypatch.setattr(article_module, "broker", fake_broker)
 
     resp = client.post("/articles/publish_article", json={
@@ -213,26 +279,83 @@ def test_publish_article_queues_job_with_tenant_id_and_grounding_fields(client, 
     })
 
     assert resp.status_code == 200
-    body = resp.get_json()
-    assert body["status"] == "queued"
-    assert body["job_id"] == "1-0"
+    assert resp.get_json() == {"status": "queued", "job_id": 91}
+    assert events[0] == ("create", 9, {
+        "keywords": "راهنمای انتخاب عینک",
+        "article_type": "راهنمای خرید",
+        "notes": "برای کاربران تازه‌کار",
+        "chapters": 5,
+        "max_words": 500,
+        "tone": "informative",
+        "audience": "general",
+        "source": "web",
+    })
+    fake_broker.publish.assert_called_once_with({"job_id": "91"})
+    assert events[1] == ("publish", {"job_id": "91"})
+    assert events[2] == ("queued", 91, "1710000000000-0")
 
-    queued = fake_broker.publish.call_args.args[0]
-    assert queued["tenant_id"] == "9"
-    assert queued["article_type"] == "راهنمای خرید"
-    assert queued["notes"] == "برای کاربران تازه‌کار"
+
+def test_publish_article_real_repository_path_creates_durable_job(test_db, client, monkeypatch):
+    tenant_id = test_db.get_or_create_tenant("telegram", 901)
+    test_db.save_wp_connection(tenant_id, "https://tenant.example", "tenant-secret")
+    fake_broker = MagicMock()
+    fake_broker.publish.return_value = "real-route-1-0"
+    monkeypatch.setattr(article_module, "broker", fake_broker)
+
+    response = client.post("/articles/publish_article", json={
+        "tenant_id": tenant_id,
+        "keywords": "راهنمای واقعی",
+        "article_type": "آموزشی",
+        "notes": "نتیجه باید پایدار بماند",
+    })
+
+    assert response.status_code == 200
+    job_id = response.get_json()["job_id"]
+    assert fake_broker.publish.call_args.args[0] == {"job_id": str(job_id)}
+    job = test_db.get_article_job(job_id, tenant_id=tenant_id)
+    assert job["status"] == "PENDING"
+    assert job["queue_message_id"] == "real-route-1-0"
+    assert job["keywords"] == "راهنمای واقعی"
+    assert job["platform"] == "telegram"
+    assert job["chat_id"] == "901"
 
 
-def test_publish_article_explains_redis_failure(client, monkeypatch):
+def test_publish_article_records_redis_failure_in_durable_job(client, monkeypatch):
     monkeypatch.setattr(
-        article_module, "get_wp_connection",
+        article_module,
+        "get_wp_connection",
         lambda tenant_id: {"site_url": "https://tenant.example", "secret": "s3cr3t"},
     )
     fake_broker = MagicMock()
     fake_broker.publish.side_effect = RuntimeError("Redis is unavailable: down")
+    failed = MagicMock(return_value=True)
+    monkeypatch.setattr(article_module, "create_article_job", lambda *_args, **_kwargs: 92)
+    monkeypatch.setattr(article_module, "mark_article_job_failed", failed)
     monkeypatch.setattr(article_module, "broker", fake_broker)
 
     resp = client.post("/articles/publish_article", json={"tenant_id": 1, "keywords": "موضوع"})
 
     assert resp.status_code == 503
+    assert resp.get_json()["job_id"] == 92
     assert "Redis" in resp.get_json()["message"]
+    fake_broker.publish.assert_called_once_with({"job_id": "92"})
+    failed.assert_called_once()
+    assert failed.call_args.args[0] == 92
+    assert "Redis queue publish failed" in failed.call_args.args[1]
+
+
+def test_publish_article_does_not_queue_when_durable_creation_fails(client, monkeypatch):
+    monkeypatch.setattr(
+        article_module,
+        "get_wp_connection",
+        lambda tenant_id: {"site_url": "https://tenant.example", "secret": "s3cr3t"},
+    )
+    fake_broker = MagicMock()
+    monkeypatch.setattr(article_module, "create_article_job", MagicMock(side_effect=RuntimeError("database down")))
+    monkeypatch.setattr(article_module, "broker", fake_broker)
+
+    resp = client.post("/articles/publish_article", json={"tenant_id": 1, "keywords": "موضوع"})
+
+    assert resp.status_code == 503
+    assert "دیتابیس" in resp.get_json()["message"]
+    fake_broker.publish.assert_not_called()

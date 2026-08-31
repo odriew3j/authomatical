@@ -79,7 +79,46 @@ docker compose --profile telegram --profile bale up -d --build
 docker compose --profile telegram --profile bale logs -f
 ```
 
-Compose به‌ترتیب PostgreSQL و Redis را بالا می‌آورد، سپس `alembic upgrade head` را اجرا می‌کند، و فقط پس از موفقیت migration، workerها را شروع می‌کند. `article-worker` باید همراه هر رباتی که فعال می‌کنید در حال اجرا باشد؛ مقاله‌ها در Redis صف می‌شوند و این worker آن‌ها را منتشر می‌کند.
+Compose به‌ترتیب PostgreSQL و Redis را بالا می‌آورد، سپس `alembic upgrade head` را اجرا می‌کند، و فقط پس از موفقیت migration، workerها را شروع می‌کند. `article-worker` باید همراه هر رباتی که فعال می‌کنید در حال اجرا باشد؛ هر درخواست مقاله ابتدا با یک `article_jobs.id` پایدار در PostgreSQL ثبت می‌شود و Redis فقط همان `job_id` را برای اجرا حمل می‌کند. worker درخواست، tenant، اتصال WordPress، تلاش‌ها و نتیجه را از PostgreSQL می‌خواند/ثبت می‌کند و هرگز بر اساس `platform` یا `chat_id` داخل Redis سایت مقصد را انتخاب نمی‌کند.
+
+### ارتقای پایدارسازی مقاله (PostgreSQL-first)
+
+قبل از deploy این نسخه از PostgreSQL backup بگیرید و migration را **قبل از restart کردن workerها** اجرا کنید. در Compose، سرویس `migrate` این کار را در اجرای معمول `up` انجام می‌دهد؛ برای اجرای صریح نیز می‌توانید بزنید:
+
+```bash
+# Docker Compose
+# profile لازم نیست؛ فقط schema را تا آخرین revision ارتقا می‌دهد.
+docker compose run --rm migrate
+
+# اجرای محلی با virtualenv فعال
+python -m alembic upgrade head
+python -m alembic current
+```
+
+revision جدید سه جدول پایدار می‌سازد:
+
+- `article_jobs`: درخواست، tenant مالک، وضعیت `PENDING` / `PROCESSING` / `SUCCESS` / `FAILED`، زمان‌ها، خطا و شناسهٔ post وردپرس
+- `article_attempts`: هر اجرای worker با شمارهٔ تلاش، زمان شروع/پایان و خطا
+- `article_results`: خروجی ساخت‌یافتهٔ AI شامل عنوان، slug، فصل‌ها، image prompt و HTML، که **پیش از** انتشار WordPress ثبت می‌شود
+
+پس از migration، bot/web/CLI جدید فقط payload زیر را در Stream می‌نویسد:
+
+```text
+job_id=<article_jobs.id>
+```
+
+شناسهٔ Redis مانند `1710000000000-0` صرفاً شناسهٔ حمل‌ونقل است و در ستون audit (`queue_message_id`) نگه داشته می‌شود؛ شناسهٔ اصلی مقاله نیست. کلیدهای موقت Redis نیز با شکل `article_temp:<database job id>` ساخته و پس از یک روز (قابل تنظیم با `ARTICLE_TEMP_TTL_SECONDS`) منقضی می‌شوند. حذف Redis هرگز تاریخچهٔ پایدار مقاله را حذف نمی‌کند. هنگام شروع `article-worker`، jobهای پایدارِ هنوز `PENDING` دوباره با همان `job_id` در صف قرار می‌گیرند؛ این فقط شکاف crash بین ثبت DB و `XADD` یا از‌دست‌رفتن Redis را جبران می‌کند و jobهای `PROCESSING`/`FAILED` را خودکار retry نمی‌کند.
+
+#### پیام‌های قدیمی Redis
+
+دو entry قدیمی Stream که `job_id` پایدار ندارند عمداً برای بررسی نگه داشته می‌شوند. worker جدید آن‌ها را **publish، ACK یا XDEL نمی‌کند** و از فیلدهای قدیمی `platform`/`chat_id` برای حدس‌زدن tenant استفاده نمی‌کند. تا وقتی سیاست backfill دستی و قابل ممیزی تصویب نشده است، آن‌ها را با دستورهای delete/requeue داشبورد هم حذف نکنید. برای مشاهدهٔ بدون تغییر داده:
+
+```bash
+docker compose exec redis redis-cli XRANGE article_jobs - +
+docker compose exec redis redis-cli XPENDING article_jobs article_jobs_group
+```
+
+پیام‌های جدیدی که job آن‌ها به `SUCCESS` یا `FAILED` رسیده است بعد از ثبت وضعیت پایدار ACK می‌شوند؛ خطای رساندن پیام Telegram/Bale نتیجهٔ publish را retry نمی‌کند تا post تکراری ساخته نشود.
 
 ### داشبورد وب (اختیاری)
 
@@ -184,7 +223,7 @@ cp .env.example .env                   # اگر قبلاً نساخته‌اید
 python -m alembic upgrade head
 ```
 
-migration اولیه با دیتابیس SQLite قدیمی‌ای که قبلاً با `init_db()` ساخته شده نیز سازگار است؛ جدول‌های موجود را دوباره نمی‌سازد و فقط revision Alembic را ثبت می‌کند. بنابراین برای ارتقا لازم نیست فایل دیتابیس یا اتصال‌های سایت را پاک کنید.
+migration اولیه با دیتابیس SQLite قدیمی‌ای که قبلاً با `init_db()` ساخته شده نیز سازگار است؛ جدول‌های tenant/اتصال موجود را دوباره نمی‌سازد و فقط revision Alembic را ثبت می‌کند. migration بعدی جدول‌های پایدار مقاله را اضافه می‌کند. بنابراین برای ارتقا لازم نیست فایل دیتابیس، اتصال‌های سایت یا Stream Redis را پاک کنید — فقط `python -m alembic upgrade head` را پیش از شروع worker اجرا کنید.
 
 سپس Redis را اجرا کنید (اگر به‌صورت سرویس سیستم نصب نشده است):
 
@@ -214,7 +253,7 @@ python -m services.web_app          # روی http://127.0.0.1:5000 با debug=Tr
 
 1. `/start` → گزینهٔ `1`: اتصال سایت از طریق افزونه
 2. گزینهٔ `2`: ساخت محصول. ابتدا نام محصول، **نوع واقعی محصول** و توضیحات اختیاری را می‌دهید. در مرحلهٔ توضیحات `x` بفرستید تا رد شود. سپس قیمت/موجودی، دسته‌بندی و تصویرها را وارد کنید و با `پایان` انتشار را شروع کنید.
-3. گزینهٔ `3`: ساخت مقاله. ابتدا موضوع، سپس **نوع مقاله** (راهنمای خرید، مقایسه، آموزشی و ...) و در آخر نکات/زاویهٔ اختیاری را می‌دهید (با `x` قابل رد است). job در صف قرار می‌گیرد و نتیجه (یا دلیل خطا) به همان چت بله/تلگرام ارسال می‌شود.
+3. گزینهٔ `3`: ساخت مقاله. ابتدا موضوع، سپس **نوع مقاله** (راهنمای خرید، مقایسه، آموزشی و ...) و در آخر نکات/زاویهٔ اختیاری را می‌دهید (با `x` قابل رد است). ابتدا یک job پایدار در PostgreSQL ثبت می‌شود و شناسهٔ پیگیری آن نمایش داده می‌شود؛ سپس فقط همان شناسه وارد صف Redis می‌شود. نتیجه (یا دلیل خطا) به همان چت بله/تلگرام ارسال می‌شود.
 
 برای محصول و مقاله هر دو، AI یک slug انگلیسی می‌سازد و Python و افزونهٔ WordPress هر دو آن را دوباره اعتبارسنجی می‌کنند؛ در نتیجه URL هرگز فارسی نمی‌شود و همیشه یک suffix یکتا دارد.
 
@@ -237,7 +276,7 @@ python -m pytest tests/test_article_worker.py -q
 python -m pytest tests/test_migrations.py -q
 ```
 
-تست migration یک SQLite موقت می‌سازد، `alembic upgrade head` را اجرا می‌کند و وجود جدول‌های tenant و اتصال WordPress را تأیید می‌کند. هیچ داده‌ای از دیتابیس واقعی شما پاک یا تغییر داده نمی‌شود.
+تست migration یک SQLite موقت می‌سازد، `alembic upgrade head` و downgrade را اجرا می‌کند و وجود جدول‌های tenant، اتصال WordPress و سه جدول پایدار مقاله را تأیید می‌کند. هیچ داده‌ای از دیتابیس واقعی شما پاک یا تغییر داده نمی‌شود.
 
 ---
 
@@ -246,7 +285,7 @@ python -m pytest tests/test_migrations.py -q
 | پیام / نشانه | راه‌حل |
 | --- | --- |
 | `SECRET_KEY is missing` | یک Fernet key بسازید و در `.env` قرار دهید؛ پس از ثبت سایت‌ها آن را عوض نکنید. |
-| `Redis is unavailable` | وضعیت `redis` یا `redis-server` و مقدار `REDIS_URL` را بررسی کنید. job در این حالت منتشر نشده و می‌توانید دوباره ارسال کنید. |
+| `Redis is unavailable` | وضعیت `redis` یا `redis-server` و مقدار `REDIS_URL` را بررسی کنید. درخواست جدید ابتدا در PostgreSQL ثبت و سپس با وضعیت `FAILED` (خطای صف) ذخیره می‌شود؛ پس از رفع Redis یک درخواست تازه ثبت کنید. برای جلوگیری از post تکراری، job شکست‌خورده را خام و کورکورانه requeue نکنید. |
 | خطای 403 یا «کلید امنیتی نامعتبر» | آدرس و secret افزونه را در گزینهٔ 1 دوباره وارد کنید. اگر secret در WordPress regenerate شده، اتصال قبلی معتبر نیست. |
 | خطای 404 افزونه | افزونهٔ ODview Sync را نصب/فعال کنید و URL ریشهٔ سایت را وارد کنید، نه `/wp-admin`. |
 | worker دائماً restart می‌شود | `docker compose logs <service>` را ببینید؛ معمولاً توکن bot، `OPENROUTER_API_KEY` یا `SECRET_KEY` ناقص است. |

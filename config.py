@@ -34,6 +34,9 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     BALE_BOT_TOKEN = os.getenv("BALE_BOT_TOKEN")
     REDIS_URL = os.getenv("REDIS_URL")
+    # Redis only keeps short-lived diagnostic/intermediate article data. The
+    # durable request/result/lifecycle records live in PostgreSQL.
+    ARTICLE_TEMP_TTL_SECONDS = int(os.getenv("ARTICLE_TEMP_TTL_SECONDS", "86400"))
     # Reasoning-capable backends behind NineRouter can genuinely take
     # 30-90s; 30s was cutting real (non-stuck) generations off mid-flight.
     # Keep MAX_RETRIES modest since each retry can itself take a minute+.

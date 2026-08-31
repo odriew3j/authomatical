@@ -1,21 +1,33 @@
 <!DOCTYPE html>
-<html lang="fa">
+<html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>ربات مقاله‌ساز وب</title>
+<title>فرم ایجاد مقاله</title>
 <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
 </head>
 <body>
 <h1>فرم ایجاد مقاله</h1>
+<p>مقاله برای سایت همان تنانتِ انتخاب‌شده ساخته می‌شود. شناسهٔ نمایش‌داده‌شده پس از ثبت، شناسهٔ پایدار PostgreSQL است؛ Redis فقط آن را برای worker حمل می‌کند.</p>
 <form id="articleForm">
+    <label>سایت / تنانت:</label><br>
+    <select name="tenant_id" required disabled>
+        <option value="">در حال دریافت سایت‌های متصل…</option>
+    </select><br><br>
+
     <label>کلیدواژه‌ها (keywords):</label><br>
     <input type="text" name="keywords" placeholder="مثال: هوش مصنوعی" required><br><br>
 
+    <label>نوع مقاله:</label><br>
+    <input type="text" name="article_type" placeholder="مثال: راهنمای خرید، مقایسه، آموزشی"><br><br>
+
+    <label>نکته یا زاویهٔ دلخواه:</label><br>
+    <textarea name="notes" placeholder="اختیاری"></textarea><br><br>
+
     <label>تعداد فصل‌ها (chapters):</label><br>
-    <input type="number" name="chapters" placeholder="پیشفرض: 5"><br><br>
+    <input type="number" name="chapters" min="1" placeholder="پیشفرض: 5"><br><br>
 
     <label>حداکثر تعداد کلمات هر فصل (max_words):</label><br>
-    <input type="number" name="max_words" placeholder="پیشفرض: 500"><br><br>
+    <input type="number" name="max_words" min="1" placeholder="پیشفرض: 500"><br><br>
 
     <label>لحن (tone):</label><br>
     <select name="tone">
@@ -29,18 +41,48 @@
     <label>مخاطب (audience):</label><br>
     <input type="text" name="audience" placeholder="مثال: developers / general"><br><br>
 
-    <button type="submit">ارسال</button>
+    <button type="submit">ثبت و ارسال به صف</button>
 </form>
 
 <hr>
 <div id="response"></div>
 
 <script>
+function escapeHtml(value) {
+    return $("<div>").text(value || "").html();
+}
+
+function loadTenants() {
+    const select = $("select[name='tenant_id']");
+    $.get("/api/tenants")
+        .done(function(tenants) {
+            select.empty();
+            if (!tenants.length) {
+                select.append($("<option>", { value: "", text: "هیچ سایت متصلی پیدا نشد" }));
+                return;
+            }
+            select.append($("<option>", { value: "", text: "سایت را انتخاب کنید" }));
+            tenants.forEach(function(tenant) {
+                const label = `${tenant.site_url} — ${tenant.platform}:${tenant.chat_id}`;
+                select.append($("<option>", { value: tenant.tenant_id, text: label }));
+            });
+            select.prop("disabled", false);
+        })
+        .fail(function() {
+            select.empty().append($("<option>", { value: "", text: "دریافت سایت‌ها ناموفق بود" }));
+        });
+}
+
+$(loadTenants);
+
 $("#articleForm").submit(function(e) {
     e.preventDefault();
 
     const formData = {
+        tenant_id: $("select[name='tenant_id']").val(),
         keywords: $("input[name='keywords']").val(),
+        article_type: $("input[name='article_type']").val() || "",
+        notes: $("textarea[name='notes']").val() || "",
         chapters: $("input[name='chapters']").val() || 5,
         max_words: $("input[name='max_words']").val() || 500,
         tone: $("select[name='tone']").val() || "informative",
@@ -54,12 +96,13 @@ $("#articleForm").submit(function(e) {
         data: JSON.stringify(formData),
         success: function(data) {
             $("#response").html(
-                "<p>Job ID: " + data.job_id + "</p>" +
-                "<p>Status: " + data.status + "</p>"
+                "<p>شناسهٔ پیگیری: " + escapeHtml(String(data.job_id)) + "</p>" +
+                "<p>وضعیت: " + escapeHtml(data.status) + "</p>"
             );
         },
         error: function(xhr) {
-            $("#response").text("خطا: " + xhr.responseText);
+            const body = xhr.responseJSON || {};
+            $("#response").text("خطا: " + (body.message || xhr.responseText));
         }
     });
 });

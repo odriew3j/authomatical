@@ -11,6 +11,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
 
+def _as_text(value) -> str:
+    """Normalize Redis bytes at the broker boundary.
+
+    A Redis stream ID is still only a transport identifier, but decoding it
+    here prevents accidental keys such as ``article_temp:b'123-0'`` in any
+    caller that logs or temporarily associates it with another value.
+    """
+
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+
+
 class RedisBroker:
     def __init__(self, stream="jobs", redis_client=None):
         # Creating a redis-py client does not connect immediately.  A useful
@@ -31,7 +42,7 @@ class RedisBroker:
             for key, value in data.items()
         }
         try:
-            return self.redis.xadd(self.stream, data_bytes)
+            return _as_text(self.redis.xadd(self.stream, data_bytes))
         except redis.exceptions.RedisError as exc:
             log(f"[Redis publish error] {exc}")
             raise RuntimeError(f"Redis is unavailable: {exc}") from exc
@@ -66,12 +77,11 @@ class RedisBroker:
                 converted_fields = []
                 for msg_id, fields in msgs:
                     readable_fields = {
-                        key.decode() if isinstance(key, bytes) else str(key):
-                        value.decode() if isinstance(value, bytes) else str(value)
+                        _as_text(key): _as_text(value)
                         for key, value in fields.items()
                     }
-                    converted_fields.append((msg_id, readable_fields))
-                converted.append((stream_name, converted_fields))
+                    converted_fields.append((_as_text(msg_id), readable_fields))
+                converted.append((_as_text(stream_name), converted_fields))
             return converted
         except redis.exceptions.RedisError as exc:
             log(f"[Redis consume error] {exc}")

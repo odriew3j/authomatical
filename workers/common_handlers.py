@@ -28,7 +28,14 @@ from services.product_builder import ProductBuilder
 from clients.site_connector_client import SiteConnectorClient, SiteConnectorError
 
 from database.db import init_db
-from database.repository import get_or_create_tenant, save_wp_connection, get_wp_connection
+from database.repository import (
+    create_article_job,
+    get_or_create_tenant,
+    get_wp_connection,
+    mark_article_job_failed,
+    mark_article_job_queued,
+    save_wp_connection,
+)
 from messaging.redis_broker import RedisBroker
 
 logger = logging.getLogger(__name__)
@@ -346,30 +353,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data["data"]
 
     if step == "article":
+        # Validate that this conversation still owns a connected site before
+        # creating a request.  The durable job itself derives platform/chat
+        # metadata from tenant_id, never from Redis fields.
         conn = await require_connection(update, context)
         if not conn:
             return
 
+        tenant_id = get_tenant_id(update, context)
         job_data = {
             "keywords": data["keywords"],
             "article_type": data.get("article_type", ""),
             "notes": data.get("notes", ""),
-            "chapters": "5",
-            "max_words": "500",
+            "chapters": 5,
+            "max_words": 500,
             "tone": "informative",
             "audience": "general",
-
-            "platform": get_platform(context),
-            "chat_id": str(update.effective_chat.id),
+            "source": "bot",
         }
 
+        # PostgreSQL is written first.  A Redis stream entry is merely an
+        # execution notification containing this durable ID — it must never
+        # be the sole source of history or tenant ownership.
         try:
-            job_id = article_broker.publish(job_data)
-        except RuntimeError as e:
-            # Redis down/unreachable — this used to bubble up as a raw
-            # unhandled ConnectionError caught only by the generic error
-            # handler; give a specific, actionable message instead.
-            logging.error(f"Failed to publish article job: {e}")
+            job_id = create_article_job(tenant_id, **job_data)
+        except Exception:
+            logger.exception("Could not persist article job for tenant=%s", tenant_id)
+            await update.message.reply_text(
+                "⚠️ ثبت درخواست مقاله در دیتابیس ناموفق بود. لطفاً کمی بعد دوباره امتحان کن."
+            )
+            reset_flow(context)
+            await show_main_menu(update, context)
+            return
+
+        try:
+            queue_message_id = article_broker.publish({"job_id": str(job_id)})
+        except RuntimeError as exc:
+            # The durable record remains available for diagnostics even when
+            # Redis is down.  Mark it terminal before returning to the user;
+            # it was never enqueued, so no worker can publish it later.
+            try:
+                mark_article_job_failed(job_id, f"Redis queue publish failed: {exc}")
+            except Exception:
+                logger.exception("Could not record Redis queue failure for article job=%s", job_id)
+            logger.error("Failed to publish durable article job=%s: %s", job_id, exc)
             await update.message.reply_text(
                 "⚠️ صف پردازش پیام (Redis) در دسترس نیست. لطفاً بعداً دوباره امتحان کن."
             )
@@ -377,9 +404,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_main_menu(update, context)
             return
 
+        # If this metadata update is briefly unavailable, the XADD already
+        # succeeded and the durable PENDING job remains safe to process.  Do
+        # not incorrectly turn it into FAILED after it has been queued.
+        try:
+            mark_article_job_queued(job_id, queue_message_id)
+        except Exception:
+            logger.exception("Could not record Redis message ID for article job=%s", job_id)
+
         await update.message.reply_text(
             "🤖 مقاله وارد مرحله پردازش با هوش مصنوعی شد.\n"
-            "⏳ این عملیات ممکن است حدود ۱ دقیقه زمان ببرد، لطفاً منتظر بمانید."
+            "⏳ این عملیات ممکن است حدود ۱ دقیقه زمان ببرد، لطفاً منتظر بمانید.\n"
+            f"🔎 شناسه پیگیری: {job_id}"
         )
 
         reset_flow(context)

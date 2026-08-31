@@ -32,7 +32,7 @@ button.goto { background: #007bff; color: white; margin-top: 10px; }
         <button class="goto" onclick="location.href='/articles/publish_article'">فرم مقالات</button>
         <table id="articleJobs">
             <thead>
-                <tr><th>Job ID</th><th>عنوان کلیدواژه</th><th>عملیات</th></tr>
+                <tr><th>Job ID</th><th>عنوان کلیدواژه</th><th>وضعیت پایدار</th></tr>
             </thead>
             <tbody></tbody>
         </table>
@@ -57,13 +57,14 @@ function fetchJobs(jobType) {
         let tbody = "";
         data.forEach(job => {
             let title = job.data.keywords || job.data.title || "—";
+            let actionOrStatus = jobType === "article"
+                ? (job.status || "—")
+                : `<button class="delete" onclick="deleteJob('${jobType}','${job.id}')">لغو</button>
+                   <button class="requeue" onclick="requeueJob('${jobType}','${job.id}')">دوباره ارسال</button>`;
             tbody += `<tr>
                         <td>${job.id}</td>
                         <td>${title}</td>
-                        <td>
-                            <button class="delete" onclick="deleteJob('${jobType}','${job.id}')">لغو</button>
-                            <button class="requeue" onclick="requeueJob('${jobType}','${job.id}')">دوباره ارسال</button>
-                        </td>
+                        <td>${actionOrStatus}</td>
                     </tr>`;
         });
         $(`#${jobType}Jobs tbody`).html(tbody);
