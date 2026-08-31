@@ -20,15 +20,17 @@ class ODviewSync_Article {
             'post_type'    => 'post',
         ];
 
-        // Slug: force an ASCII/English one when supplied, same reasoning
-        // as products — a Persian post_title should not automatically
-        // become a Persian permalink slug.
-        if (!empty($data['slug'])) {
-            $slug = sanitize_title($data['slug']);
-            if ($slug !== '') {
-                $post_args['post_name'] = $slug;
-            }
+        // Force an ASCII/English slug — identical reasoning and logic to
+        // products (see class-odviewsync-product.php): a Persian
+        // post_title must never automatically become a Persian permalink.
+        // Python sends an English, random-suffixed slug first; this is
+        // the server-side boundary in case another client calls this REST
+        // endpoint directly, or the AI slug wasn't actually ASCII.
+        $slug = !empty($data['slug']) ? strtolower(sanitize_title($data['slug'])) : '';
+        if (!preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug)) {
+            $slug = 'article-' . substr(str_replace('-', '', wp_generate_uuid4()), 0, 8);
         }
+        $post_args['post_name'] = wp_unique_post_slug($slug, 0, $post_args['post_status'], 'post', 0);
 
         $post_id = wp_insert_post($post_args, true);
 

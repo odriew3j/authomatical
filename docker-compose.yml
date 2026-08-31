@@ -99,6 +99,31 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Optional admin dashboard (create products/articles for any connected
+  # tenant from a browser instead of the bot). Enable with:
+  #   docker compose --profile web up -d --build
+  # It has NO authentication of its own — anyone who can reach this port
+  # can act on any connected tenant's site. Only expose it behind a
+  # reverse proxy with auth, or keep it on a private/internal network.
+  web:
+    profiles: ["web"]
+    build: .
+    command: gunicorn services.web_app:app --bind 0.0.0.0:8080
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://authomatical:${POSTGRES_PASSWORD:-changeme}@postgres:5432/authomatical
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
   redis_data:

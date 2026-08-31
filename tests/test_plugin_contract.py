@@ -22,3 +22,14 @@ def test_plugin_validates_product_slug_as_strict_ascii_and_resolves_conflicts():
     assert "preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug)" in product
     assert "wp_generate_uuid4" in product
     assert "wp_unique_post_slug" in product
+
+
+def test_plugin_validates_article_slug_as_strict_ascii_and_resolves_conflicts():
+    """Articles get the exact same link-safety guarantee as products: an
+    AI-returned Persian (or missing) slug must never reach wp_insert_post
+    unvalidated."""
+    article = (PLUGIN / "includes" / "class-odviewsync-article.php").read_text(encoding="utf-8")
+
+    assert "preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug)" in article
+    assert "wp_generate_uuid4" in article
+    assert "wp_unique_post_slug" in article

@@ -103,6 +103,8 @@ def process_chain(msg_id, fields) -> bool:
 
             if step == WordPressSteps.BUILD_ARTICLE:
                 keywords = fields.get("keywords", "No Keywords")
+                article_type = fields.get("article_type", "")
+                notes = fields.get("notes", "")
                 chapters = _positive_int(fields.get("chapters"), 5)
                 tone = fields.get("tone", "informative")
                 audience = fields.get("audience", "general")
@@ -114,6 +116,8 @@ def process_chain(msg_id, fields) -> bool:
 
                 context["article"] = article_builder.build_structure(
                     keywords=keywords,
+                    article_type=article_type,
+                    notes=notes,
                     num_chapters=chapters,
                     tone=tone,
                     audience=audience,
@@ -135,10 +139,17 @@ def process_chain(msg_id, fields) -> bool:
                 context["content_html"] = combine_article_html(context["article"])
 
             elif step == WordPressSteps.CREATE_POST:
-                if not platform or not chat_id:
-                    raise RuntimeError("job is missing platform/chat_id; cannot resolve its tenant site")
+                tenant_id = fields.get("tenant_id")
+                if tenant_id:
+                    # Web-dashboard-originated job: the caller already
+                    # knows which tenant to publish to (no chat identity
+                    # to resolve one from).
+                    tenant_id = int(tenant_id)
+                elif platform and chat_id:
+                    tenant_id = get_or_create_tenant(platform, chat_id)
+                else:
+                    raise RuntimeError("job has neither tenant_id nor platform/chat_id; cannot resolve its tenant site")
 
-                tenant_id = get_or_create_tenant(platform, chat_id)
                 connection = get_wp_connection(tenant_id)
                 if not connection:
                     raise RuntimeError("tenant has no connected site")
@@ -149,6 +160,7 @@ def process_chain(msg_id, fields) -> bool:
                     {
                         "title": article.get("title", "Untitled"),
                         "content": context["content_html"],
+                        "slug": article.get("slug"),
                         "status": "publish",
                     }
                 )

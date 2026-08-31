@@ -25,6 +25,14 @@ def _article_context():
     )
 
 
+async def _drive_article_flow(handlers_module, update, context, *, keywords="موضوع مقاله", article_type="راهنمای خرید", notes="x"):
+    """Feed all ARTICLE_STEPS answers through handle_message in order,
+    mirroring how a real conversation completes the chain."""
+    for text in (keywords, article_type, notes):
+        update.message.text = text
+        await handlers_module.handle_message(update, context)
+
+
 @pytest.mark.asyncio
 async def test_article_submission_resets_conversation_after_queueing(monkeypatch):
     update = _update()
@@ -42,11 +50,13 @@ async def test_article_submission_resets_conversation_after_queueing(monkeypatch
     monkeypatch.setattr(handlers, "article_broker", broker)
     monkeypatch.setattr(handlers, "show_main_menu", show_menu)
 
-    await handlers.handle_message(update, context)
+    await _drive_article_flow(handlers, update, context)
 
     broker.publish.assert_called_once()
     queued = broker.publish.call_args.args[0]
     assert queued["keywords"] == "موضوع مقاله"
+    assert queued["article_type"] == "راهنمای خرید"
+    assert queued["notes"] == ""  # "x" means "skipped"
     assert queued["platform"] == "telegram"
     assert queued["chat_id"] == "5544"
     assert "step" not in context.user_data
@@ -77,7 +87,7 @@ async def test_article_submission_explains_redis_failure_and_resets(monkeypatch)
     monkeypatch.setattr(handlers, "article_broker", broker)
     monkeypatch.setattr(handlers, "show_main_menu", show_menu)
 
-    await handlers.handle_message(update, context)
+    await _drive_article_flow(handlers, update, context)
 
     assert "step" not in context.user_data
     show_menu.assert_awaited_once_with(update, context)
@@ -88,6 +98,12 @@ def test_product_flow_includes_grounding_steps_and_allows_notes_to_be_skipped():
     keys = [key for key, _question in handlers.PRODUCT_STEPS]
     assert keys[:3] == ["title", "product_type", "user_notes"]
     assert "user_notes" in handlers.SKIPPABLE_WITH_X
+
+
+def test_article_flow_includes_grounding_steps_and_allows_notes_to_be_skipped():
+    keys = [key for key, _question in handlers.ARTICLE_STEPS]
+    assert keys == ["keywords", "article_type", "notes"]
+    assert "notes" in handlers.SKIPPABLE_WITH_X
 
 
 @pytest.mark.asyncio

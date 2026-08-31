@@ -7,10 +7,11 @@ Authomatical یک ربات چندکاربره برای **بله** و **تلگر�
 ## قابلیت‌های اصلی
 
 - اتصال امن سایت WordPress از داخل گفتگو، بدون ارسال رمز عبور wp-admin
-- ساخت محصول با مراحل «نوع محصول» و «توضیحات اختیاری» برای تولید محتوای فارسی دقیق‌تر
-- slug انگلیسی و یکتا برای محصول، با اعتبارسنجی هم در Python و هم در افزونهٔ WordPress
+- ساخت محصول و مقاله هر دو با مراحل «نوع/موضوع» و «توضیحات اختیاری» برای تولید محتوای فارسی دقیق‌تر و بدون کلی‌گویی
+- slug انگلیسی و یکتا برای محصول و مقاله، با اعتبارسنجی هم در Python و هم در افزونهٔ WordPress
 - صف Redis برای مقاله‌ها و worker چندمستاجره که مقاله را فقط روی سایت همان کاربر منتشر می‌کند
 - پیام موفقیت یا خطا به همان چت بله/تلگرام پس از پایان کار
+- داشبورد وب اختیاری برای ساخت محصول/مقاله بدون چت با ربات (نیاز به انتخاب تنانت؛ بدون authentication خودش — پشت reverse proxy یا شبکهٔ داخلی اجرا شود)
 - PostgreSQL + Alembic برای migrationهای قابل‌ردیابی؛ SQLite همچنان برای توسعهٔ سبک پشتیبانی می‌شود
 - Docker Compose برای PostgreSQL، Redis، migration و workerها
 
@@ -46,7 +47,7 @@ database/       مدل‌ها، رمزنگاری و repository
 migrations/     Alembic migrations
 messaging/      Redis Streams wrapper
 workers/        bot workers و article worker
-services/       AI builders و داشبورد قدیمی (برای انتشار production استفاده نشود)
+services/       AI builders و داشبورد وب اختیاری (نیازمند انتخاب تنانت؛ بدون auth خودش)
 wp-content/     افزونهٔ WordPress ODview Sync
 tests/          تست‌های unit و integration سبک
 ```

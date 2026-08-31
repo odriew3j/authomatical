@@ -70,3 +70,27 @@ def delete_wp_connection(tenant_id: int) -> bool:
         session.delete(conn)
         session.commit()
         return True
+
+
+def list_connected_tenants() -> list[dict]:
+    """Every tenant with a verified site connection — used by the admin
+    web dashboard to let an operator pick which tenant's site to act on
+    (the web app has no chat identity of its own, unlike the bot)."""
+    with SessionLocal() as session:
+        rows = (
+            session.query(Tenant, WPConnection)
+            .join(WPConnection, WPConnection.tenant_id == Tenant.id)
+            .filter(WPConnection.verified.is_(True))
+            .order_by(Tenant.id)
+            .all()
+        )
+        return [
+            {
+                "tenant_id": tenant.id,
+                "platform": tenant.platform,
+                "chat_id": tenant.platform_chat_id,
+                "display_name": tenant.display_name,
+                "site_url": conn.site_url,
+            }
+            for tenant, conn in rows
+        ]

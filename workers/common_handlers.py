@@ -84,10 +84,12 @@ PRODUCT_STEPS = [
 
 # Keys the user is explicitly allowed to skip by sending "x" (in addition
 # to the existing "-" convention used for numeric fields).
-SKIPPABLE_WITH_X = {"user_notes"}
+SKIPPABLE_WITH_X = {"user_notes", "notes"}
 
 ARTICLE_STEPS = [
     ("keywords", "📝 موضوع مقاله رو وارد کن:"),
+    ("article_type", "🏷 این مقاله چه نوعیه؟ (مثلاً: راهنمای خرید، مقایسه، آموزشی، معرفی محصول و ...)\nاین به هوش مصنوعی کمک می‌کنه محتوای دقیق‌تر و کاربردی‌تر بنویسه، نه چرت‌وپرت کلی."),
+    ("notes", "📝 اگر نکته یا زاویه‌ی خاصی می‌خوای مقاله روش تمرکز کنه بنویس.\nاگر چیزی نداری، فقط بفرست: x"),
 ]
 
 
@@ -350,6 +352,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         job_data = {
             "keywords": data["keywords"],
+            "article_type": data.get("article_type", ""),
+            "notes": data.get("notes", ""),
             "chapters": "5",
             "max_words": "500",
             "tone": "informative",

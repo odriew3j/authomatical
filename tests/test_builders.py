@@ -1,3 +1,5 @@
+import re
+
 from services.product_builder import ProductBuilder
 from services.article_builder import ArticleBuilder
 
@@ -88,6 +90,71 @@ def test_article_builder_lazily_creates_its_default_client_before_chat(monkeypat
 
     result = builder.build_structure(keywords="test")
 
-    assert result == {"title": "t", "chapters": []}
+    assert result["title"] == "t"
+    assert result["chapters"] == []
+    assert re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", result["slug"])
     assert created == [True]
     assert builder.client is fake_client
+
+
+def test_article_build_structure_always_returns_ascii_unique_slug():
+    """Mirrors ProductBuilder's link-safety guarantee: regardless of what
+    (if anything) the model returns for "slug", the final result must be
+    English/ASCII and unique — never a Persian permalink."""
+    client = type("FakeClient", (), {})()
+    client.chat = lambda *a, **k: {
+        "model": "test",
+        "choices": [{
+            "finish_reason": "stop",
+            "message": {"content": '{"title":"راهنمای عینک","chapters":[],"slug":"راهنمای-انتخاب-عینک"}'},
+        }],
+    }
+    ab = ArticleBuilder(client=client)
+
+    result = ab.build_structure(keywords="عینک آفتابی")
+
+    assert re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", result["slug"])
+    assert "راهنمای" not in result["slug"]
+
+
+def test_article_build_structure_grounds_prompt_in_type_and_notes():
+    """Mirrors the product builder's grounding test: article_type and notes
+    must actually reach the prompt, not just be accepted and ignored."""
+    calls = []
+
+    class CapturingClient:
+        def chat(self, messages, **kwargs):
+            calls.append(messages)
+            return {
+                "model": "test",
+                "choices": [{"finish_reason": "stop", "message": {"content": '{"title":"t","chapters":[]}'}}],
+            }
+
+    ab = ArticleBuilder(client=CapturingClient())
+    ab.build_structure(
+        keywords="عینک آفتابی",
+        article_type="راهنمای خرید",
+        notes="مخاطب افراد تازه‌کار است",
+    )
+
+    prompt = calls[0][0]["content"]
+    assert "راهنمای خرید" in prompt
+    assert "مخاطب افراد تازه‌کار است" in prompt
+
+
+def test_article_build_structure_treats_x_as_skipped_notes():
+    calls = []
+
+    class CapturingClient:
+        def chat(self, messages, **kwargs):
+            calls.append(messages)
+            return {
+                "model": "test",
+                "choices": [{"finish_reason": "stop", "message": {"content": '{"title":"t","chapters":[]}'}}],
+            }
+
+    ab = ArticleBuilder(client=CapturingClient())
+    ab.build_structure(keywords="عینک آفتابی", notes="x")
+
+    prompt = calls[0][0]["content"]
+    assert "چیزی داده نشده" in prompt
