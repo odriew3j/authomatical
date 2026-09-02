@@ -25,11 +25,12 @@ def _article_context():
     )
 
 
-async def _drive_article_flow(handlers_module, update, context, *, keywords="موضوع مقاله", article_type="راهنمای خرید", notes="x"):
+async def _drive_article_flow(handlers_module, update, context, *, keywords="موضوع مقاله", article_type="راهنمای خرید", notes="x", image_reply="-"):
     """Feed all ARTICLE_STEPS answers through handle_message in order,
-    mirroring how a real conversation completes the chain."""
+    then the featured-image step (skipped by default), mirroring how a
+    real conversation completes the chain."""
 
-    for text in (keywords, article_type, notes):
+    for text in (keywords, article_type, notes, image_reply):
         update.message.text = text
         await handlers_module.handle_message(update, context)
 
@@ -72,6 +73,7 @@ async def test_article_submission_persists_before_queueing_only_durable_job_id(m
         "keywords": "موضوع مقاله",
         "article_type": "راهنمای خرید",
         "notes": "",  # "x" means skipped
+        "featured_image_url": None,  # "-" means the image step was skipped
         "chapters": 5,
         "max_words": 500,
         "tone": "informative",
@@ -156,6 +158,95 @@ def test_article_flow_includes_grounding_steps_and_allows_notes_to_be_skipped():
     keys = [key for key, _question in handlers.ARTICLE_STEPS]
     assert keys == ["keywords", "article_type", "notes"]
     assert "notes" in handlers.SKIPPABLE_WITH_X
+
+
+@pytest.mark.asyncio
+async def test_article_image_step_accepts_various_skip_tokens(monkeypatch):
+    for skip_word in ("-", "x", "X", "رد", "skip"):
+        update = _update()
+        context = _article_context()
+
+        async def connected(*_args):
+            return {"site_url": "https://site.example", "secret": "secret"}
+
+        create_job = MagicMock(return_value=90)
+        monkeypatch.setattr(handlers, "get_tenant_id", lambda *_args: 1)
+        monkeypatch.setattr(handlers, "require_connection", connected)
+        monkeypatch.setattr(handlers, "create_article_job", create_job)
+        monkeypatch.setattr(handlers, "mark_article_job_queued", lambda *_a: True)
+        monkeypatch.setattr(handlers, "article_broker", MagicMock(publish=MagicMock(return_value="1-0")))
+        monkeypatch.setattr(handlers, "show_main_menu", AsyncMock())
+
+        await _drive_article_flow(handlers, update, context, image_reply=skip_word)
+
+        assert create_job.call_args.kwargs["featured_image_url"] is None, skip_word
+
+
+@pytest.mark.asyncio
+async def test_article_image_step_rejects_non_skip_text_and_waits_for_a_photo(monkeypatch):
+    update = _update()
+    context = _article_context()
+    monkeypatch.setattr(handlers, "get_tenant_id", lambda *_args: 1)
+
+    for text in ("موضوع مقاله", "راهنمای خرید", "x"):
+        update.message.text = text
+        await handlers.handle_message(update, context)
+
+    update.message.text = "یه متن نامربوط"
+    await handlers.handle_message(update, context)
+
+    assert context.user_data["step"] == "awaiting_article_image"
+    assert any("یه عکس بفرست" in call.args[0] for call in update.message.reply_text.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_article_featured_image_upload_finalizes_the_job(monkeypatch):
+    update = _update()
+    context = _article_context()
+
+    async def connected(*_args):
+        return {"site_url": "https://site.example", "secret": "secret"}
+
+    create_job = MagicMock(return_value=91)
+    monkeypatch.setattr(handlers, "get_tenant_id", lambda *_args: 1)
+    monkeypatch.setattr(handlers, "require_connection", connected)
+    monkeypatch.setattr(handlers, "create_article_job", create_job)
+    monkeypatch.setattr(handlers, "mark_article_job_queued", lambda *_a: True)
+    monkeypatch.setattr(handlers, "article_broker", MagicMock(publish=MagicMock(return_value="1-0")))
+    monkeypatch.setattr(handlers, "show_main_menu", AsyncMock())
+
+    for text in ("موضوع مقاله", "راهنمای خرید", "x"):
+        update.message.text = text
+        await handlers.handle_message(update, context)
+    assert context.user_data["step"] == "awaiting_article_image"
+
+    fake_file = AsyncMock()
+    fake_file.download_to_drive = AsyncMock()
+    photo_update = SimpleNamespace(
+        message=SimpleNamespace(
+            text=None,
+            reply_text=AsyncMock(),
+            photo=[SimpleNamespace(get_file=AsyncMock(return_value=fake_file))],
+            document=None,
+        ),
+        effective_chat=SimpleNamespace(id=5544),
+        effective_user=SimpleNamespace(first_name="کاربر"),
+    )
+
+    class FakeSite:
+        def __init__(self, *_a):
+            pass
+
+        def upload_media(self, file_path):
+            return {"success": True, "url": "https://site.example/wp-content/uploads/img.jpg"}
+
+    monkeypatch.setattr(handlers, "SiteConnectorClient", FakeSite)
+    monkeypatch.setattr("os.remove", lambda *_a: None)
+
+    await handlers.handle_file(photo_update, context)
+
+    assert create_job.call_args.kwargs["featured_image_url"] == "https://site.example/wp-content/uploads/img.jpg"
+    assert "step" not in context.user_data
 
 
 @pytest.mark.asyncio

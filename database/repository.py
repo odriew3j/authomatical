@@ -148,6 +148,7 @@ def _job_to_dict(job: ArticleJob, include_history: bool = False) -> dict[str, An
         "max_words": job.max_words,
         "tone": job.tone,
         "audience": job.audience,
+        "featured_image_url": job.featured_image_url,
         "status": job.status,
         "retry_count": job.retry_count,
         "error_message": job.error_message,
@@ -273,6 +274,7 @@ def create_article_job(
     max_words: Any = 500,
     tone: Any = "informative",
     audience: Any = "general",
+    featured_image_url: Any = None,
     source: Any = "bot",
 ) -> int:
     """Create a durable pending Article job before it is sent to Redis.
@@ -303,6 +305,7 @@ def create_article_job(
             max_words=_positive_int(max_words, 500),
             tone=_text(tone, default="informative", limit=100),
             audience=_text(audience, default="general", limit=255),
+            featured_image_url=_text(featured_image_url, limit=2000) or None,
             status=ArticleJobStatus.PENDING.value,
         )
         session.add(job)
@@ -389,6 +392,7 @@ def claim_pending_article_job(job_id: int) -> ArticleJobClaim:
             "max_words": job.max_words,
             "tone": job.tone,
             "audience": job.audience,
+            "featured_image_url": job.featured_image_url,
             "attempt_id": attempt.id,
             "attempt_number": attempt.attempt_number,
         }

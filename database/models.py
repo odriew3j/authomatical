@@ -107,6 +107,13 @@ class ArticleJob(Base):
     tone = Column(String(100), nullable=False, default="informative")
     audience = Column(String(255), nullable=False, default="general")
 
+    # Optional featured image: a URL already uploaded to the tenant's own
+    # WordPress media library (via SiteConnectorClient.upload_media before
+    # this job is created — see workers/common_handlers.py). Never an
+    # arbitrary external URL; the plugin resolves it with
+    # attachment_url_to_postid, which only matches local attachments.
+    featured_image_url = Column(Text, nullable=True)
+
     status = Column(String(20), nullable=False, default=ArticleJobStatus.PENDING.value, index=True)
     retry_count = Column(Integer, nullable=False, default=0)
     error_message = Column(Text, nullable=True)

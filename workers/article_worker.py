@@ -314,6 +314,7 @@ def process_chain(msg_id: Any, fields: dict[str, Any]) -> bool:
                 "title": article.get("title", "Untitled"),
                 "content": context["content_html"],
                 "slug": article.get("slug"),
+                "featured_image": job.get("featured_image_url"),
                 "status": "publish",
             }
         )

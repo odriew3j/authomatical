@@ -41,6 +41,9 @@
     <label>مخاطب (audience):</label><br>
     <input type="text" name="audience" placeholder="مثال: developers / general"><br><br>
 
+    <label>آدرس تصویر شاخص (featured_image_url، اختیاری):</label><br>
+    <input type="text" name="featured_image_url" placeholder="باید از قبل روی سایت همین تنانت آپلود شده باشد (مثلاً از رسانهٔ وردپرس)"><br><br>
+
     <button type="submit">ثبت و ارسال به صف</button>
 </form>
 
@@ -86,7 +89,8 @@ $("#articleForm").submit(function(e) {
         chapters: $("input[name='chapters']").val() || 5,
         max_words: $("input[name='max_words']").val() || 500,
         tone: $("select[name='tone']").val() || "informative",
-        audience: $("input[name='audience']").val() || "general"
+        audience: $("input[name='audience']").val() || "general",
+        featured_image_url: $("input[name='featured_image_url']").val() || ""
     };
 
     $.ajax({

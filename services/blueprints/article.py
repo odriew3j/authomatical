@@ -53,6 +53,14 @@ def publish_article():
     if not keywords:
         return jsonify({"status": "error", "message": "موضوع/کلیدواژهٔ مقاله لازم است."}), 400
 
+    featured_image_url = (data.get("featured_image_url") or "").strip() or None
+    if featured_image_url and not featured_image_url.startswith(("http://", "https://")):
+        return jsonify({"status": "error", "message": "آدرس تصویر شاخص باید یک URL معتبر باشد."}), 400
+    # Must already be on the TENANT's own WordPress media library — the
+    # plugin resolves it with attachment_url_to_postid, which silently
+    # ignores any URL it doesn't recognize as a local attachment (no error
+    # surfaces back through create-post if it doesn't match).
+
     # Give an early, clear error rather than creating a job that cannot ever
     # publish.  The worker repeats this check because a site can disconnect
     # while a durable job is waiting in the queue.
@@ -69,6 +77,7 @@ def publish_article():
             max_words=data.get("max_words", 500),
             tone=data.get("tone", "informative"),
             audience=data.get("audience", "general"),
+            featured_image_url=featured_image_url,
             source="web",
         )
     except ValueError as exc:

@@ -136,6 +136,36 @@ def test_process_chain_uses_durable_job_tenant_and_persists_success_before_ack(t
     assert "https://tenant.example/guide" in sent.call_args.args[2]
 
 
+def test_process_chain_forwards_featured_image_url_to_create_post(test_db, monkeypatch):
+    tenant_id, job_id = _create_durable_job(
+        test_db,
+        featured_image_url="https://tenant.example/wp-content/uploads/cover.jpg",
+    )
+    broker = FakeBroker()
+    builder = FakeArticleBuilder()
+    _install_worker_dependencies(monkeypatch, broker, builder, SuccessfulSite)
+    monkeypatch.setattr(worker, "send_platform_message", MagicMock(return_value=True))
+
+    completed = worker.process_chain("stream-1-0", {"job_id": str(job_id)})
+
+    assert completed is True
+    site = SuccessfulSite.instances[0]
+    assert site.payload["featured_image"] == "https://tenant.example/wp-content/uploads/cover.jpg"
+
+
+def test_process_chain_sends_none_featured_image_when_job_has_no_image(test_db, monkeypatch):
+    tenant_id, job_id = _create_durable_job(test_db)
+    broker = FakeBroker()
+    builder = FakeArticleBuilder()
+    _install_worker_dependencies(monkeypatch, broker, builder, SuccessfulSite)
+    monkeypatch.setattr(worker, "send_platform_message", MagicMock(return_value=True))
+
+    worker.process_chain("stream-1-0", {"job_id": str(job_id)})
+
+    site = SuccessfulSite.instances[0]
+    assert site.payload["featured_image"] is None
+
+
 def test_worker_persists_generated_result_before_wordpress_publish(test_db, monkeypatch):
     _tenant_id, job_id = _create_durable_job(test_db)
     broker = FakeBroker()

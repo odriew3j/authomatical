@@ -10,7 +10,8 @@ from database.models import Tenant, WPConnection
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ARTICLE_REVISION = "20260901_01"
+ARTICLE_REVISION = "20260901_02"
+ARTICLE_TABLES_REVISION = "20260901_01"  # first revision to create article_jobs/attempts/results
 INITIAL_REVISION = "20260830_01"
 
 
@@ -47,7 +48,7 @@ def test_article_persistence_migration_upgrades_and_downgrades_cleanly(tmp_path,
 
     assert {"alembic_version", "tenants", "wp_connections", "article_jobs", "article_attempts", "article_results"}.issubset(tables)
     assert revision == ARTICLE_REVISION
-    assert {"tenant_id", "keywords", "status", "retry_count", "queue_message_id", "wordpress_post_id"}.issubset(job_columns)
+    assert {"tenant_id", "keywords", "status", "retry_count", "queue_message_id", "wordpress_post_id", "featured_image_url"}.issubset(job_columns)
     assert {"job_id", "attempt_number", "status", "error_message"}.issubset(attempt_columns)
     assert {"job_id", "attempt_id", "title", "slug", "chapters_json", "image_prompt", "content_html"}.issubset(result_columns)
 

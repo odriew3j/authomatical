@@ -288,6 +288,7 @@ def test_publish_article_persists_then_queues_only_durable_job_id(client, monkey
         "max_words": 500,
         "tone": "informative",
         "audience": "general",
+        "featured_image_url": None,
         "source": "web",
     })
     fake_broker.publish.assert_called_once_with({"job_id": "91"})
@@ -318,6 +319,49 @@ def test_publish_article_real_repository_path_creates_durable_job(test_db, clien
     assert job["keywords"] == "راهنمای واقعی"
     assert job["platform"] == "telegram"
     assert job["chat_id"] == "901"
+
+
+def test_publish_article_accepts_featured_image_url(client, monkeypatch):
+    monkeypatch.setattr(
+        article_module,
+        "get_wp_connection",
+        lambda tenant_id: {"site_url": "https://tenant.example", "secret": "s3cr3t"},
+    )
+    events = []
+
+    def create_job(tenant_id, **kwargs):
+        events.append(kwargs)
+        return 92
+
+    monkeypatch.setattr(article_module, "create_article_job", create_job)
+    monkeypatch.setattr(article_module, "mark_article_job_queued", lambda *_a: True)
+    monkeypatch.setattr(article_module, "broker", MagicMock(publish=MagicMock(return_value="1-0")))
+
+    resp = client.post("/articles/publish_article", json={
+        "tenant_id": 9,
+        "keywords": "راهنمای انتخاب عینک",
+        "featured_image_url": "https://tenant.example/wp-content/uploads/cover.jpg",
+    })
+
+    assert resp.status_code == 200
+    assert events[0]["featured_image_url"] == "https://tenant.example/wp-content/uploads/cover.jpg"
+
+
+def test_publish_article_rejects_non_url_featured_image(client, monkeypatch):
+    monkeypatch.setattr(
+        article_module,
+        "get_wp_connection",
+        lambda tenant_id: {"site_url": "https://tenant.example", "secret": "s3cr3t"},
+    )
+
+    resp = client.post("/articles/publish_article", json={
+        "tenant_id": 9,
+        "keywords": "راهنمای انتخاب عینک",
+        "featured_image_url": "not-a-url",
+    })
+
+    assert resp.status_code == 400
+    assert "URL" in resp.get_json()["message"]
 
 
 def test_publish_article_records_redis_failure_in_durable_job(client, monkeypatch):

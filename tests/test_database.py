@@ -72,6 +72,7 @@ def test_article_job_persists_request_and_tenant_snapshot(test_db):
         max_words="700",
         tone="friendly",
         audience="new shoppers",
+        featured_image_url="https://tenant.example/wp-content/uploads/cover.jpg",
         source="bot",
     )
 
@@ -87,10 +88,19 @@ def test_article_job_persists_request_and_tenant_snapshot(test_db):
     assert job["notes"] == "برای تازه‌کارها"
     assert job["chapters"] == 6
     assert job["max_words"] == 700
+    assert job["featured_image_url"] == "https://tenant.example/wp-content/uploads/cover.jpg"
     assert job["status"] == "PENDING"
     assert job["requested_at"] is not None
     assert job["attempts"] == []
     assert job["results"] == []
+
+
+def test_article_job_featured_image_defaults_to_none_and_is_optional(test_db):
+    tenant_id = test_db.get_or_create_tenant("telegram", 333)
+    job_id = test_db.create_article_job(tenant_id, keywords="موضوع بدون تصویر")
+
+    job = test_db.get_article_job(job_id, tenant_id=tenant_id)
+    assert job["featured_image_url"] is None
 
 
 def test_article_job_tenant_scoped_reads_never_cross_tenants(test_db):

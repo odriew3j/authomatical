@@ -302,6 +302,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ اگر آپلود تموم شده، کلمه «پایان» رو بفرست.")
         return
 
+    # --- article featured-image step (optional, single image) ---
+    if context.user_data.get("step") == "awaiting_article_image":
+        if text.strip().lower() in ("-", "x", "رد", "skip"):
+            await _finalize_article_job(update, context)
+        else:
+            await update.message.reply_text(
+                "⚠️ یه عکس بفرست، یا برای رد کردن این مرحله بفرست: -"
+            )
+        return
+
     # --- mode of starting the steps ---
     if "step" not in context.user_data:
         if text == "1":
@@ -353,73 +363,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data["data"]
 
     if step == "article":
-        # Validate that this conversation still owns a connected site before
-        # creating a request.  The durable job itself derives platform/chat
-        # metadata from tenant_id, never from Redis fields.
-        conn = await require_connection(update, context)
-        if not conn:
-            return
-
-        tenant_id = get_tenant_id(update, context)
-        job_data = {
-            "keywords": data["keywords"],
-            "article_type": data.get("article_type", ""),
-            "notes": data.get("notes", ""),
-            "chapters": 5,
-            "max_words": 500,
-            "tone": "informative",
-            "audience": "general",
-            "source": "bot",
-        }
-
-        # PostgreSQL is written first.  A Redis stream entry is merely an
-        # execution notification containing this durable ID — it must never
-        # be the sole source of history or tenant ownership.
-        try:
-            job_id = create_article_job(tenant_id, **job_data)
-        except Exception:
-            logger.exception("Could not persist article job for tenant=%s", tenant_id)
-            await update.message.reply_text(
-                "⚠️ ثبت درخواست مقاله در دیتابیس ناموفق بود. لطفاً کمی بعد دوباره امتحان کن."
-            )
-            reset_flow(context)
-            await show_main_menu(update, context)
-            return
-
-        try:
-            queue_message_id = article_broker.publish({"job_id": str(job_id)})
-        except RuntimeError as exc:
-            # The durable record remains available for diagnostics even when
-            # Redis is down.  Mark it terminal before returning to the user;
-            # it was never enqueued, so no worker can publish it later.
-            try:
-                mark_article_job_failed(job_id, f"Redis queue publish failed: {exc}")
-            except Exception:
-                logger.exception("Could not record Redis queue failure for article job=%s", job_id)
-            logger.error("Failed to publish durable article job=%s: %s", job_id, exc)
-            await update.message.reply_text(
-                "⚠️ صف پردازش پیام (Redis) در دسترس نیست. لطفاً بعداً دوباره امتحان کن."
-            )
-            reset_flow(context)
-            await show_main_menu(update, context)
-            return
-
-        # If this metadata update is briefly unavailable, the XADD already
-        # succeeded and the durable PENDING job remains safe to process.  Do
-        # not incorrectly turn it into FAILED after it has been queued.
-        try:
-            mark_article_job_queued(job_id, queue_message_id)
-        except Exception:
-            logger.exception("Could not record Redis message ID for article job=%s", job_id)
-
+        context.user_data["step"] = "awaiting_article_image"
         await update.message.reply_text(
-            "🤖 مقاله وارد مرحله پردازش با هوش مصنوعی شد.\n"
-            "⏳ این عملیات ممکن است حدود ۱ دقیقه زمان ببرد، لطفاً منتظر بمانید.\n"
-            f"🔎 شناسه پیگیری: {job_id}"
+            "🖼 اگر می‌خوای این مقاله یک تصویر شاخص (featured image) داشته باشه، بفرستش.\n"
+            "اگر نمی‌خوای، فقط بفرست: -"
         )
-
-        reset_flow(context)
-        await show_main_menu(update, context)
+        return
 
     elif step == "product":
         categories = context.user_data.get("categories", [])
@@ -462,10 +411,88 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update, context)
 
 
+# -------- ARTICLE FINALIZATION (shared by skip-image and upload-image paths) --------
+async def _finalize_article_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Persist the durable article job (with or without a featured image)
+    and hand it to Redis for the article worker to pick up.
+
+    Called from two places: the user skipping the optional image step, and
+    handle_file after a successful upload — both converge here so the
+    create/publish/notify logic exists exactly once.
+    """
+    conn = await require_connection(update, context)
+    if not conn:
+        return
+
+    data = context.user_data.get("data", {})
+    tenant_id = get_tenant_id(update, context)
+    job_data = {
+        "keywords": data["keywords"],
+        "article_type": data.get("article_type", ""),
+        "notes": data.get("notes", ""),
+        "featured_image_url": data.get("featured_image") or None,
+        "chapters": 5,
+        "max_words": 500,
+        "tone": "informative",
+        "audience": "general",
+        "source": "bot",
+    }
+
+    # PostgreSQL is written first.  A Redis stream entry is merely an
+    # execution notification containing this durable ID — it must never
+    # be the sole source of history or tenant ownership.
+    try:
+        job_id = create_article_job(tenant_id, **job_data)
+    except Exception:
+        logger.exception("Could not persist article job for tenant=%s", tenant_id)
+        await update.message.reply_text(
+            "⚠️ ثبت درخواست مقاله در دیتابیس ناموفق بود. لطفاً کمی بعد دوباره امتحان کن."
+        )
+        reset_flow(context)
+        await show_main_menu(update, context)
+        return
+
+    try:
+        queue_message_id = article_broker.publish({"job_id": str(job_id)})
+    except RuntimeError as exc:
+        # The durable record remains available for diagnostics even when
+        # Redis is down.  Mark it terminal before returning to the user;
+        # it was never enqueued, so no worker can publish it later.
+        try:
+            mark_article_job_failed(job_id, f"Redis queue publish failed: {exc}")
+        except Exception:
+            logger.exception("Could not record Redis queue failure for article job=%s", job_id)
+        logger.error("Failed to publish durable article job=%s: %s", job_id, exc)
+        await update.message.reply_text(
+            "⚠️ صف پردازش پیام (Redis) در دسترس نیست. لطفاً بعداً دوباره امتحان کن."
+        )
+        reset_flow(context)
+        await show_main_menu(update, context)
+        return
+
+    # If this metadata update is briefly unavailable, the XADD already
+    # succeeded and the durable PENDING job remains safe to process.  Do
+    # not incorrectly turn it into FAILED after it has been queued.
+    try:
+        mark_article_job_queued(job_id, queue_message_id)
+    except Exception:
+        logger.exception("Could not record Redis message ID for article job=%s", job_id)
+
+    await update.message.reply_text(
+        "🤖 مقاله وارد مرحله پردازش با هوش مصنوعی شد.\n"
+        "⏳ این عملیات ممکن است حدود ۱ دقیقه زمان ببرد، لطفاً منتظر بمانید.\n"
+        f"🔎 شناسه پیگیری: {job_id}"
+    )
+
+    reset_flow(context)
+    await show_main_menu(update, context)
+
+
 # -------- HANDLE FILE/PHOTO --------
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("step") != "awaiting_images":
-        return  # ignore stray images outside the product-image step
+    step = context.user_data.get("step")
+    if step not in ("awaiting_images", "awaiting_article_image"):
+        return  # ignore stray images outside an image-collecting step
 
     conn = await require_connection(update, context)
     if not conn:
@@ -511,12 +538,20 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     media_url = result.get("url")
-    if media_url:
+    if not media_url:
+        return
+
+    if step == "awaiting_images":
         data = context.user_data.setdefault("data", {})
         images = data.setdefault("images", [])
         if media_url not in images:
             images.append(media_url)
             await update.message.reply_text("📸 تصویر به گالری محصول اضافه شد. می‌تونی ادامه بدی یا «پایان» رو بفرستی.")
+    elif step == "awaiting_article_image":
+        data = context.user_data.setdefault("data", {})
+        data["featured_image"] = media_url
+        await update.message.reply_text("📸 تصویر شاخص آپلود شد.")
+        await _finalize_article_job(update, context)
 
 
 async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
