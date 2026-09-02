@@ -33,6 +33,15 @@ class Config:
     WC_CONSUMER_SECRET = os.getenv("WC_CONSUMER_SECRET")
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     BALE_BOT_TOKEN = os.getenv("BALE_BOT_TOKEN")
+    # @username of each bot (no leading @), used only to build the
+    # /start connect_<token> deep links returned by the one-click connect
+    # endpoint (services/blueprints/connect.py) — never used for auth.
+    TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME")
+    BALE_BOT_USERNAME = os.getenv("BALE_BOT_USERNAME")
+    # How long a one-click connect token (registered by the ODview Sync
+    # plugin via /api/connect/register) stays valid before it must be
+    # regenerated.
+    CONNECT_TOKEN_TTL_SECONDS = int(os.getenv("CONNECT_TOKEN_TTL_SECONDS", 600))
     REDIS_URL = os.getenv("REDIS_URL")
     # Redis only keeps short-lived diagnostic/intermediate article data. The
     # durable request/result/lifecycle records live in PostgreSQL.

@@ -78,6 +78,29 @@ class WPConnection(Base):
     tenant = relationship("Tenant", back_populates="wp_connection")
 
 
+class PendingConnection(Base):
+    """A short-lived, single-use handshake for the one-click "اتصال با یک
+    کلیک" flow: the ODview Sync plugin generates ``token`` in wp-admin and
+    POSTs it here (together with the site's own secret) via the new public
+    ``/api/connect/register`` endpoint — *before* any chat has happened.
+    The bot then completes the connection when the person opens the
+    ``/start connect_<token>`` deep link, without ever needing the secret
+    typed or pasted into chat. ``token`` carries all the entropy here (the
+    plugin must generate it with sufficient randomness); this table only
+    keeps it around briefly and makes sure it's consumed at most once.
+    """
+
+    __tablename__ = "pending_connections"
+
+    id = Column(Integer, primary_key=True)
+    token = Column(String(128), nullable=False, unique=True, index=True)
+    site_url = Column(String(500), nullable=False)
+    secret_encrypted = Column(String(2000), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+
+
 class ArticleJob(Base):
     """The durable source of truth for one requested article.
 

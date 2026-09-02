@@ -16,6 +16,7 @@ from database.db import SessionLocal
 from database.models import (
     Tenant,
     WPConnection,
+    PendingConnection,
     ArticleAttempt,
     ArticleJob,
     ArticleJobStatus,
@@ -236,6 +237,50 @@ def delete_wp_connection(tenant_id: int) -> bool:
         session.delete(conn)
         session.commit()
         return True
+
+
+def create_pending_connection(token: str, site_url: str, secret: str, ttl_seconds: int) -> None:
+    """Registers a one-click "اتصال با یک کلیک" handshake (see
+    services/blueprints/connect.py). Raises ValueError on a token
+    collision — with a properly random token this should never happen in
+    practice, but it must never silently overwrite someone else's pending
+    connection.
+    """
+    with SessionLocal() as session:
+        if session.query(PendingConnection).filter_by(token=token).first():
+            raise ValueError("token already registered")
+        now = _utcnow()
+        session.add(
+            PendingConnection(
+                token=token,
+                site_url=site_url,
+                secret_encrypted=encrypt(secret),
+                created_at=now,
+                expires_at=now + datetime.timedelta(seconds=ttl_seconds),
+            )
+        )
+        session.commit()
+
+
+def consume_pending_connection(token: str) -> dict | None:
+    """Atomically claims a pending one-click connection: returns
+    {'site_url': ..., 'secret': ...} and marks it consumed the first (and
+    only) time it's called for a given token before it expires; returns
+    None for an unknown, already-used, or expired token so the deep link
+    can never be replayed."""
+    with SessionLocal() as session:
+        pending = (
+            session.query(PendingConnection)
+            .filter_by(token=token, consumed_at=None)
+            .first()
+        )
+        if not pending or pending.expires_at < _utcnow():
+            return None
+        pending.consumed_at = _utcnow()
+        site_url = pending.site_url
+        secret = decrypt(pending.secret_encrypted)
+        session.commit()
+        return {"site_url": site_url, "secret": secret}
 
 
 def list_connected_tenants() -> list[dict]:

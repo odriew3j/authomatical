@@ -5,11 +5,14 @@ if (!defined('ABSPATH')) exit;
 class ODviewSync_Auth {
 
     private $option_key = 'odview_sync_secret';
+    private $backend_url_option_key = 'odview_sync_backend_url';
 
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu']);
         add_action('admin_init', [$this, 'generate_secret']);
         add_action('admin_post_odview_sync_regenerate', [$this, 'handle_regenerate']);
+        add_action('admin_post_odview_sync_save_backend_url', [$this, 'handle_save_backend_url']);
+        add_action('wp_ajax_odview_sync_generate_connect_token', [$this, 'handle_generate_connect_token']);
     }
 
     // Generate on first install
