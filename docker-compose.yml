@@ -99,6 +99,29 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Public, intentionally narrow endpoint for the WordPress plugin's one-click
+  # pairing flow. Publish this behind HTTPS (for example through a reverse
+  # proxy) and point the plugin's Backend URL at that public address. Keeping
+  # it separate means the unauthenticated operator dashboard below stays
+  # private. Enable with: docker compose --profile connect up -d --build
+  connect:
+    profiles: ["connect"]
+    build: .
+    # Keep raw bearer URLs out of Gunicorn access logs; application logs use
+    # the redacting formatter configured in services/connect_app.py.
+    command: gunicorn services.connect_app:app --bind 0.0.0.0:8080 --access-logfile /dev/null
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://authomatical:${POSTGRES_PASSWORD:-changeme}@postgres:5432/authomatical
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   # Optional admin dashboard (create products/articles for any connected
   # tenant from a browser instead of the bot). Enable with:
   #   docker compose --profile web up -d --build

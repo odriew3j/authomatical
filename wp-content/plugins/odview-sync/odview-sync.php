@@ -2,13 +2,14 @@
 /**
  * Plugin Name: ODview Sync — Bale & Telegram Bot Connector
  * Description: اتصال امن سایت وردپرس/ووکامرس به بازوی بله و بات تلگرام برای ساخت محصول، آپلود تصویر و مدیریت دسته‌بندی از طریق چت.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Mohammad Mousavi
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('ODVIEW_SYNC_VERSION', '1.1.0');
+define('ODVIEW_SYNC_VERSION', '1.2.0');
+define('ODVIEW_SYNC_PLUGIN_FILE', __FILE__);
 
 // Auto Load Classes
 // File naming convention: class-odviewsync-{name}.php  (e.g. ODviewSync_Auth -> class-odviewsync-auth.php)

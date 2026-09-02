@@ -25,6 +25,13 @@ from telegram.error import NetworkError
 from telegram.ext import ContextTypes
 
 from services.product_builder import ProductBuilder
+from services.connect_security import (
+    CONNECT_START_PREFIX,
+    ConnectValidationError,
+    assert_site_host_is_public,
+    is_valid_connect_token,
+    normalise_site_url,
+)
 from clients.site_connector_client import SiteConnectorClient, SiteConnectorError
 
 from database.db import init_db
@@ -190,12 +197,39 @@ async def require_connection(update, context) -> Optional[dict]:
 
 
 # -------- WORDPRESS CONNECT (shared by manual entry and one-click) --------
-async def _verify_and_save_site(update, context, tenant_id: int, site_url: str, secret: str) -> bool:
-    """Pings the site with the given credentials and, on success, saves the
-    connection and shows the main menu. Returns whether it succeeded — the
-    manual step-by-step flow and the one-click /start connect_<token> flow
-    both end up here so the verify/save logic exists exactly once."""
-    site = SiteConnectorClient(site_url, secret)
+async def _verify_and_save_site(
+    update,
+    context,
+    tenant_id: int,
+    site_url: str,
+    secret: str,
+    *,
+    strict_one_click: bool = False,
+) -> bool:
+    """Ping a site and save it only after verification succeeds.
+
+    ``strict_one_click`` is used only for a pending bearer capability.  It
+    repeats public-host validation, disallows redirects and checks the URL
+    reported by the authenticated plugin before the tenant row can be changed.
+    The manual recovery flow retains its historical URL behaviour.
+    """
+
+    if strict_one_click:
+        try:
+            assert_site_host_is_public(site_url)
+        except ConnectValidationError:
+            await update.message.reply_text(
+                "❌ تأیید امنیتی آدرس سایت ناموفق بود. از وردپرس یک لینک اتصال تازه بسازید."
+            )
+            reset_flow(context)
+            await show_main_menu(update, context)
+            return False
+
+    site = (
+        SiteConnectorClient(site_url, secret, allow_redirects=False)
+        if strict_one_click
+        else SiteConnectorClient(site_url, secret)
+    )
     try:
         info = site.ping()
     except SiteConnectorError as e:
@@ -206,6 +240,26 @@ async def _verify_and_save_site(update, context, tenant_id: int, site_url: str, 
         reset_flow(context)
         await show_main_menu(update, context)
         return False
+
+    if strict_one_click:
+        if not isinstance(info, dict) or info.get("success") is not True:
+            await update.message.reply_text(
+                "❌ پاسخ تأیید سایت معتبر نیست. از وردپرس یک لینک اتصال تازه بسازید."
+            )
+            reset_flow(context)
+            await show_main_menu(update, context)
+            return False
+        try:
+            reported_url = normalise_site_url(info.get("site_url"))
+        except ConnectValidationError:
+            reported_url = None
+        if reported_url != site_url:
+            await update.message.reply_text(
+                "❌ سایت ثبت‌شده دیگر قابل تأیید نیست. از وردپرس یک لینک اتصال تازه بسازید."
+            )
+            reset_flow(context)
+            await show_main_menu(update, context)
+            return False
 
     if not info.get("wc_active", True):
         await update.message.reply_text(
@@ -234,18 +288,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # completes the exact same verify+save as the manual flow — just
     # without anyone typing or pasting the secret into chat.
     args = context.args or []
-    if args and args[0].startswith("connect_"):
-        token = args[0][len("connect_"):]
-        pending = consume_pending_connection(token)
+    if len(args) == 1 and args[0].startswith(CONNECT_START_PREFIX):
+        token = args[0][len(CONNECT_START_PREFIX):]
+        # Do this before touching the repository: malformed deep-link input
+        # must not trigger token lookups or accidentally reach any site.
+        if not is_valid_connect_token(token):
+            await update.message.reply_text(
+                "⚠️ لینک اتصال نامعتبر است. از وردپرس یک لینک جدید بسازید."
+            )
+            await show_main_menu(update, context)
+            return
+
+        # The platform is set only by the worker entrypoint, never by the
+        # deep-link payload. A Bale worker therefore cannot consume a token
+        # generated for Telegram (and vice versa), even for equal chat IDs.
+        pending = consume_pending_connection(token, get_platform(context))
         if not pending:
             await update.message.reply_text(
-                "⚠️ لینک اتصال منقضی شده یا قبلاً استفاده شده.\n"
+                "⚠️ لینک اتصال منقضی شده، برای ربات دیگری است یا قبلاً استفاده شده.\n"
                 "از وردپرس دوباره روی «اتصال با یک کلیک» بزن، یا با گزینه‌ی «1» دستی وصل شو."
             )
             await show_main_menu(update, context)
             return
         await update.message.reply_text("🔎 در حال بررسی اتصال به سایتت...")
-        await _verify_and_save_site(update, context, tenant_id, pending["site_url"], pending["secret"])
+        # _verify_and_save_site only writes after a fresh authenticated ping.
+        # A failed verification therefore leaves any previous tenant
+        # connection intact while this single-use token remains consumed.
+        await _verify_and_save_site(
+            update,
+            context,
+            tenant_id,
+            pending["site_url"],
+            pending["secret"],
+            strict_one_click=True,
+        )
         return
 
     await show_main_menu(update, context)

@@ -11,19 +11,25 @@ def test_container_and_environment_templates_exist():
 
     assert "FROM python:3.11-slim" in dockerfile
     assert "pip install --no-cache-dir -r requirements.txt" in dockerfile
-    for service in ("postgres:", "redis:", "migrate:", "article-worker:"):
+    for service in ("postgres:", "redis:", "migrate:", "article-worker:", "connect:"):
         assert service in compose
     assert 'profiles: ["telegram"]' in compose
     assert 'profiles: ["bale"]' in compose
     assert "condition: service_completed_successfully" in compose
-    for variable in ("OPENROUTER_API_KEY", "SECRET_KEY", "POSTGRES_PASSWORD"):
+    for variable in (
+        "OPENROUTER_API_KEY", "SECRET_KEY", "POSTGRES_PASSWORD",
+        "TELEGRAM_BOT_USERNAME", "BALE_BOT_USERNAME", "CONNECT_TOKEN_TTL_SECONDS",
+        "CONNECT_REGISTRATION_PROOF_MAX_AGE_SECONDS",
+    ):
         assert f"{variable}=" in env_example
+    assert 'profiles: ["connect"]' in compose
 
 
 def test_requirements_include_production_migration_dependencies():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     assert "alembic" in requirements
     assert "psycopg2-binary" in requirements
+    assert "qrcode" in requirements
 
 
 def test_optional_docker_desktop_dns_override_is_available_without_hardcoding_it():

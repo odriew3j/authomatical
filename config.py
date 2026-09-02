@@ -5,6 +5,15 @@ if os.environ.get("RAILWAY_ENVIRONMENT") is None:
     load_dotenv()
 
 
+def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    """Read a deploy-time integer without allowing unsafe token lifetimes."""
+
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return min(max(value, minimum), maximum)
+
 
 class Config:
     # NineRouter: local multi-backend AI gateway (localhost:20128). It can
@@ -38,10 +47,23 @@ class Config:
     # endpoint (services/blueprints/connect.py) — never used for auth.
     TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME")
     BALE_BOT_USERNAME = os.getenv("BALE_BOT_USERNAME")
-    # How long a one-click connect token (registered by the ODview Sync
-    # plugin via /api/connect/register) stays valid before it must be
-    # regenerated.
-    CONNECT_TOKEN_TTL_SECONDS = int(os.getenv("CONNECT_TOKEN_TTL_SECONDS", 600))
+    # A one-click pairing link is a bearer capability. Keep it deliberately
+    # short-lived even when an environment value was accidentally set too high.
+    CONNECT_TOKEN_TTL_SECONDS = _bounded_env_int(
+        "CONNECT_TOKEN_TTL_SECONDS", default=600, minimum=60, maximum=900,
+    )
+    # Registration proves possession of the WordPress plugin secret by pinging
+    # the site before saving anything. This public endpoint gets a bounded,
+    # independent network budget rather than the longer AI/site-operation one.
+    CONNECT_VERIFICATION_TIMEOUT_SECONDS = _bounded_env_int(
+        "CONNECT_VERIFICATION_TIMEOUT_SECONDS", default=15, minimum=3, maximum=30,
+    )
+    # Signed registration requests are accepted only near their creation time.
+    # This complements the digest tombstone retained after expiry/consumption
+    # and prevents a captured body from reviving an old deep link.
+    CONNECT_REGISTRATION_PROOF_MAX_AGE_SECONDS = _bounded_env_int(
+        "CONNECT_REGISTRATION_PROOF_MAX_AGE_SECONDS", default=300, minimum=60, maximum=600,
+    )
     REDIS_URL = os.getenv("REDIS_URL")
     # Redis only keeps short-lived diagnostic/intermediate article data. The
     # durable request/result/lifecycle records live in PostgreSQL.

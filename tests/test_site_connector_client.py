@@ -48,6 +48,14 @@ def test_site_connector_translates_site_and_network_failures():
 
     with patch(
         "clients.site_connector_client.requests.post",
+        return_value=_response(ok=False, status=500, text="X-ODVIEW-SECRET=site-secret"),
+    ):
+        with pytest.raises(SiteConnectorError) as error:
+            client.create_post({"title": "x", "content": "y"})
+    assert "site-secret" not in str(error.value)
+
+    with patch(
+        "clients.site_connector_client.requests.post",
         side_effect=requests.ConnectionError("offline"),
     ):
         with pytest.raises(SiteConnectorError, match="انتشار مقاله ناموفق"):

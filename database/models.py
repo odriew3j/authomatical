@@ -79,26 +79,32 @@ class WPConnection(Base):
 
 
 class PendingConnection(Base):
-    """A short-lived, single-use handshake for the one-click "اتصال با یک
-    کلیک" flow: the ODview Sync plugin generates ``token`` in wp-admin and
-    POSTs it here (together with the site's own secret) via the new public
-    ``/api/connect/register`` endpoint — *before* any chat has happened.
-    The bot then completes the connection when the person opens the
-    ``/start connect_<token>`` deep link, without ever needing the secret
-    typed or pasted into chat. ``token`` carries all the entropy here (the
-    plugin must generate it with sufficient randomness); this table only
-    keeps it around briefly and makes sure it's consumed at most once.
+    """A short-lived, single-use, platform-bound one-click pairing record.
+
+    The raw deep-link token is a bearer capability and is deliberately never
+    persisted: ``token_digest`` is a SHA-256 lookup value.  The WordPress
+    secret is encrypted with the same Fernet mechanism as ``WPConnection``.
+    ``platform`` is fixed at registration so a Telegram link cannot be used by
+    a Bale chat (or vice versa), even when chat IDs happen to match.
     """
 
     __tablename__ = "pending_connections"
 
     id = Column(Integer, primary_key=True)
-    token = Column(String(128), nullable=False, unique=True, index=True)
+    token_digest = Column(String(64), nullable=False, unique=True, index=True)
+    platform = Column(String(20), nullable=False)
     site_url = Column(String(500), nullable=False)
     secret_encrypted = Column(String(2000), nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
     consumed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("platform IN ('telegram', 'bale')", name="ck_pending_connections_platform"),
+        # Keep the named constraint aligned with the Alembic schema in
+        # addition to the unique lookup index declared on token_digest.
+        UniqueConstraint("token_digest", name="uq_pending_connections_token_digest"),
+    )
 
 
 class ArticleJob(Base):

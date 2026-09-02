@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from database.db import SessionLocal
 from database.models import (
@@ -23,6 +24,11 @@ from database.models import (
     ArticleResult,
 )
 from database.crypto import encrypt, decrypt
+from services.connect_security import (
+    connect_token_digest,
+    is_supported_connect_platform,
+    is_valid_connect_token,
+)
 from utils.logging_utils import redact_sensitive_text
 
 
@@ -30,6 +36,11 @@ ARTICLE_JOB_CLAIMED = "claimed"
 ARTICLE_JOB_MISSING = "missing"
 ARTICLE_JOB_IN_PROGRESS = "in_progress"
 ARTICLE_JOB_TERMINAL = "terminal"
+
+# Keep a digest-only tombstone for a day after expiry/consumption. It prevents
+# a captured, still-valid signed registration request from recreating a token
+# that was already used, while bounding retention of the encrypted secret.
+PENDING_CONNECTION_TOMBSTONE_RETENTION = datetime.timedelta(days=1)
 
 
 @dataclass(frozen=True)
@@ -239,46 +250,122 @@ def delete_wp_connection(tenant_id: int) -> bool:
         return True
 
 
-def create_pending_connection(token: str, site_url: str, secret: str, ttl_seconds: int) -> None:
-    """Registers a one-click "اتصال با یک کلیک" handshake (see
-    services/blueprints/connect.py). Raises ValueError on a token
-    collision — with a properly random token this should never happen in
-    practice, but it must never silently overwrite someone else's pending
-    connection.
+def create_pending_connection(
+    token: str,
+    platform: str,
+    site_url: str,
+    secret: str,
+    ttl_seconds: int,
+) -> None:
+    """Persist a short-lived platform-bound pairing capability.
+
+    Only a SHA-256 digest of the raw deep-link token reaches the database.
+    This protects an active pairing link if an otherwise read-only database
+    export is exposed. Expired/consumed rows remain as digest tombstones for a
+    bounded period, so a captured registration request cannot revive a link
+    that was already used; cleanup removes them after that retention period.
+
+    A random-token collision is handled by the database's unique constraint,
+    rather than a check-then-insert race that two web workers could bypass.
     """
+
+    if not is_valid_connect_token(token):
+        raise ValueError("token is invalid")
+    if not is_supported_connect_platform(platform):
+        raise ValueError("platform is invalid")
+    if not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
+        raise ValueError("token TTL is invalid")
+
+    now = _utcnow()
+    token_digest = connect_token_digest(token)
     with SessionLocal() as session:
-        if session.query(PendingConnection).filter_by(token=token).first():
-            raise ValueError("token already registered")
-        now = _utcnow()
+        session.query(PendingConnection).filter(
+            PendingConnection.expires_at <= now - PENDING_CONNECTION_TOMBSTONE_RETENTION
+        ).delete(synchronize_session=False)
         session.add(
             PendingConnection(
-                token=token,
+                token_digest=token_digest,
+                platform=platform,
                 site_url=site_url,
                 secret_encrypted=encrypt(secret),
                 created_at=now,
                 expires_at=now + datetime.timedelta(seconds=ttl_seconds),
             )
         )
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            raise ValueError("token already registered") from exc
 
 
-def consume_pending_connection(token: str) -> dict | None:
-    """Atomically claims a pending one-click connection: returns
-    {'site_url': ..., 'secret': ...} and marks it consumed the first (and
-    only) time it's called for a given token before it expires; returns
-    None for an unknown, already-used, or expired token so the deep link
-    can never be replayed."""
+def pending_connection_is_available(token: str, platform: str) -> bool:
+    """Return whether a platform-specific token can still be rendered as QR.
+
+    No secret is decrypted for this read.  It deliberately does not reveal
+    whether a token exists for a *different* platform.
+    """
+
+    if not is_valid_connect_token(token) or not is_supported_connect_platform(platform):
+        return False
+
+    now = _utcnow()
+    token_digest = connect_token_digest(token)
     with SessionLocal() as session:
-        pending = (
-            session.query(PendingConnection)
-            .filter_by(token=token, consumed_at=None)
-            .first()
-        )
-        if not pending or pending.expires_at < _utcnow():
+        return session.query(PendingConnection.id).filter(
+            PendingConnection.token_digest == token_digest,
+            PendingConnection.platform == platform,
+            PendingConnection.consumed_at.is_(None),
+            PendingConnection.expires_at > now,
+        ).first() is not None
+
+
+def consume_pending_connection(token: str, platform: str) -> dict | None:
+    """Atomically consume a pending pairing capability for one bot platform.
+
+    The conditional UPDATE is the concurrency boundary: PostgreSQL evaluates
+    ``consumed_at IS NULL`` and ``expires_at > now`` while acquiring the row
+    lock, so two bot workers cannot both receive the encrypted site secret.
+    It has the same single-winner semantics under SQLite tests.  A wrong
+    platform never matches the UPDATE and therefore cannot consume a link
+    intended for the other bot.
+    """
+
+    if not is_valid_connect_token(token) or not is_supported_connect_platform(platform):
+        return None
+
+    now = _utcnow()
+    token_digest = connect_token_digest(token)
+    with SessionLocal() as session:
+        pending = session.query(PendingConnection).filter(
+            PendingConnection.token_digest == token_digest,
+            PendingConnection.platform == platform,
+        ).first()
+        if not pending:
             return None
-        pending.consumed_at = _utcnow()
+
+        # Do not decrypt until after we know the row is currently eligible.
+        # The conditional update, rather than the preceding read, makes this
+        # safe when multiple polling workers receive the same deep link.
+        claimed = session.query(PendingConnection).filter(
+            PendingConnection.id == pending.id,
+            PendingConnection.platform == platform,
+            PendingConnection.consumed_at.is_(None),
+            PendingConnection.expires_at > now,
+        ).update({PendingConnection.consumed_at: now}, synchronize_session=False)
+        if claimed != 1:
+            session.rollback()
+            return None
+
+        try:
+            secret = decrypt(pending.secret_encrypted)
+        except Exception:
+            # Do not accidentally consume a row whose encrypted value could
+            # not be read; its normal expiry cleanup will remove it safely.
+            session.rollback()
+            raise
+
         site_url = pending.site_url
-        secret = decrypt(pending.secret_encrypted)
         session.commit()
         return {"site_url": site_url, "secret": secret}
 

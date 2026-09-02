@@ -8,6 +8,27 @@ services:
     env:
       - DATABASE_URL
       - REDIS_URL
+      - SECRET_KEY
+      - TELEGRAM_BOT_USERNAME
+      - BALE_BOT_USERNAME
+      - CONNECT_TOKEN_TTL_SECONDS
+      - CONNECT_VERIFICATION_TIMEOUT_SECONDS
+      - CONNECT_REGISTRATION_PROOF_MAX_AGE_SECONDS
+
+  # Publish this service at a public HTTPS domain for the WordPress plugin.
+  # Keep the separate web dashboard private/authenticated.
+  connect:
+    build: .
+    # Do not emit raw bearer QR paths via Gunicorn access logging.
+    start: gunicorn services.connect_app:app --bind 0.0.0.0:$PORT --access-logfile /dev/null
+    env:
+      - DATABASE_URL
+      - SECRET_KEY
+      - TELEGRAM_BOT_USERNAME
+      - BALE_BOT_USERNAME
+      - CONNECT_TOKEN_TTL_SECONDS
+      - CONNECT_VERIFICATION_TIMEOUT_SECONDS
+      - CONNECT_REGISTRATION_PROOF_MAX_AGE_SECONDS
 
   worker_article:
     build: .

@@ -21,9 +21,18 @@ class SiteConnectorClient:
     never share one instance across users.
     """
 
-    def __init__(self, site_url: str, secret: str):
+    def __init__(
+        self,
+        site_url: str,
+        secret: str,
+        *,
+        timeout: int | float | None = None,
+        allow_redirects: bool = True,
+    ):
         self.base_url = site_url.rstrip("/") + "/wp-json/odview/v1"
         self.headers = {"X-ODVIEW-SECRET": secret, "User-Agent": "Authomatical-Bot"}
+        self.timeout = Config.TIMEOUT if timeout is None else timeout
+        self.allow_redirects = allow_redirects
 
     def _handle(self, resp: requests.Response):
         if resp.status_code == 403:
@@ -31,7 +40,10 @@ class SiteConnectorClient:
         if resp.status_code == 404:
             raise SiteConnectorError("افزونهٔ ODview Sync روی این سایت پیدا نشد یا نصب/فعال نیست.")
         if not resp.ok:
-            raise SiteConnectorError(f"خطای سایت ({resp.status_code}): {resp.text[:300]}")
+            # Do not reflect a remote response body into worker logs or a bot
+            # chat. A broken/malicious endpoint could echo the X-ODVIEW-SECRET
+            # header in its body; the status code is sufficient for recovery.
+            raise SiteConnectorError(f"خطای سایت ({resp.status_code}).")
         try:
             return resp.json()
         except ValueError:
@@ -39,14 +51,19 @@ class SiteConnectorClient:
 
     def ping(self) -> dict:
         try:
-            resp = requests.get(f"{self.base_url}/ping", headers=self.headers, timeout=Config.TIMEOUT)
+            resp = requests.get(
+                f"{self.base_url}/ping",
+                headers=self.headers,
+                timeout=self.timeout,
+                allow_redirects=self.allow_redirects,
+            )
         except requests.RequestException as e:
             raise SiteConnectorError(f"اتصال به سایت برقرار نشد: {e}")
         return self._handle(resp)
 
     def get_categories(self) -> list:
         try:
-            resp = requests.get(f"{self.base_url}/categories", headers=self.headers, timeout=Config.TIMEOUT)
+            resp = requests.get(f"{self.base_url}/categories", headers=self.headers, timeout=self.timeout)
         except requests.RequestException as e:
             raise SiteConnectorError(f"دریافت دسته‌بندی‌ها ناموفق بود: {e}")
         data = self._handle(resp)
@@ -61,7 +78,7 @@ class SiteConnectorClient:
                     f"{self.base_url}/upload-media",
                     headers=self.headers,
                     files=files,
-                    timeout=Config.TIMEOUT,
+                    timeout=self.timeout,
                 )
         except requests.RequestException as e:
             raise SiteConnectorError(f"آپلود تصویر ناموفق بود: {e}")
@@ -73,7 +90,7 @@ class SiteConnectorClient:
                 f"{self.base_url}/create-product",
                 headers=self.headers,
                 json=payload,
-                timeout=Config.TIMEOUT,
+                timeout=self.timeout,
             )
         except requests.RequestException as e:
             raise SiteConnectorError(f"ساخت محصول ناموفق بود: {e}")
@@ -85,7 +102,7 @@ class SiteConnectorClient:
                 f"{self.base_url}/create-post",
                 headers=self.headers,
                 json=payload,
-                timeout=Config.TIMEOUT,
+                timeout=self.timeout,
             )
         except requests.RequestException as e:
             raise SiteConnectorError(f"انتشار مقاله ناموفق بود: {e}")

@@ -10,7 +10,12 @@ from services.blueprints.connect import connect_bp
 from messaging.redis_broker import RedisBroker
 from database.db import init_db
 from database.repository import list_article_jobs, list_connected_tenants
+from utils.logging_utils import configure_worker_logging
 
+# This app can optionally expose the pairing blueprint too. Use the same
+# formatter as the dedicated connect process so accidental framework logs do
+# not retain deep-link capability values.
+configure_worker_logging()
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
 
 app.register_blueprint(article_bp, url_prefix="/articles")

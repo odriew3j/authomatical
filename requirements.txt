@@ -4,6 +4,8 @@ redis==5.2.0
 python-dotenv>=1.0.1
 python-telegram-bot==20.7
 Flask==2.3.3
+# Generates the pairing QR SVG locally; no bearer link is sent to a third-party QR service.
+qrcode>=7.4
 SQLAlchemy>=2.0.0
 cryptography>=42.0.0
 pytest>=8.0.0
