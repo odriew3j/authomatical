@@ -35,6 +35,32 @@ def test_plugin_validates_article_slug_as_strict_ascii_and_resolves_conflicts():
     assert "wp_unique_post_slug" in article
 
 
+def test_plugin_offers_server_side_one_click_pairing_without_external_qr_or_secret_links():
+    auth = (PLUGIN / "includes" / "class-odviewsync-auth.php").read_text(encoding="utf-8")
+    css = (PLUGIN / "assets" / "admin.css").read_text(encoding="utf-8")
+
+    assert "odview_sync_backend_url" in auth
+    assert "admin_post_odview_sync_save_backend_url" in auth
+    assert "wp_ajax_odview_sync_generate_connect_token" in auth
+    assert "current_user_can('manage_options')" in auth
+    assert "check_ajax_referer('odview_sync_generate_connect_token', 'nonce', false)" in auth
+    assert "random_bytes(32)" in auth
+    assert "hash_hmac('sha256'" in auth
+    assert "wp_safe_remote_post" in auth
+    assert "X-ODVIEW-CONNECT-PROOF" in auth
+    assert "'token' => $token" in auth
+    assert "'secret' => $secret" in auth
+    assert "'issued_at' => $issued_at" in auth
+    assert "data-platform=\"telegram\"" in auth
+    assert "data-platform=\"bale\"" in auth
+    assert "qr_paths" in auth
+    assert "referrerPolicy = 'no-referrer'" in auth
+    assert "window.open('about:blank', '_blank')" in auth
+    assert "api.qrserver.com" not in auth
+    assert "quickchart.io" not in auth
+    assert "odview-pairing-card" in css
+
+
 def test_plugin_attaches_featured_image_only_from_local_media_library():
     """create-post accepts a `featured_image` URL and resolves it with
     attachment_url_to_postid — which only matches attachments already on

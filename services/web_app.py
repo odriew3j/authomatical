@@ -6,14 +6,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.blueprints.article import article_bp
 from services.blueprints.product import product_bp
+from services.blueprints.connect import connect_bp
 from messaging.redis_broker import RedisBroker
 from database.db import init_db
 from database.repository import list_article_jobs, list_connected_tenants
+from utils.logging_utils import configure_worker_logging
 
+# This app can optionally expose the pairing blueprint too. Use the same
+# formatter as the dedicated connect process so accidental framework logs do
+# not retain deep-link capability values.
+configure_worker_logging()
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
 
 app.register_blueprint(article_bp, url_prefix="/articles")
 app.register_blueprint(product_bp, url_prefix="/products")
+# Public — called by the ODview Sync plugin from wp-admin, before any chat
+# identity exists yet. See services/blueprints/connect.py.
+app.register_blueprint(connect_bp, url_prefix="/api/connect")
 
 # Redis brokers
 article_broker = RedisBroker(stream="article_jobs")

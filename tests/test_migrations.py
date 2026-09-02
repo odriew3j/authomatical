@@ -10,7 +10,7 @@ from database.models import Tenant, WPConnection
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ARTICLE_REVISION = "20260901_02"
+HEAD_REVISION = "20260902_02"
 ARTICLE_TABLES_REVISION = "20260901_01"  # first revision to create article_jobs/attempts/results
 INITIAL_REVISION = "20260830_01"
 
@@ -43,14 +43,17 @@ def test_article_persistence_migration_upgrades_and_downgrades_cleanly(tmp_path,
         job_columns = {row[1] for row in connection.execute("PRAGMA table_info(article_jobs)")}
         attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(article_attempts)")}
         result_columns = {row[1] for row in connection.execute("PRAGMA table_info(article_results)")}
+        pending_columns = {row[1] for row in connection.execute("PRAGMA table_info(pending_connections)")}
     finally:
         connection.close()
 
-    assert {"alembic_version", "tenants", "wp_connections", "article_jobs", "article_attempts", "article_results"}.issubset(tables)
-    assert revision == ARTICLE_REVISION
+    assert {"alembic_version", "tenants", "wp_connections", "article_jobs", "article_attempts", "article_results", "pending_connections"}.issubset(tables)
+    assert revision == HEAD_REVISION
     assert {"tenant_id", "keywords", "status", "retry_count", "queue_message_id", "wordpress_post_id", "featured_image_url"}.issubset(job_columns)
     assert {"job_id", "attempt_number", "status", "error_message"}.issubset(attempt_columns)
     assert {"job_id", "attempt_id", "title", "slug", "chapters_json", "image_prompt", "content_html"}.issubset(result_columns)
+    assert {"token_digest", "platform", "site_url", "secret_encrypted", "expires_at", "consumed_at"}.issubset(pending_columns)
+    assert "token" not in pending_columns
 
     # The article migration is independently reversible and leaves the
     # existing tenant/connection schema on its previous revision.
@@ -111,7 +114,34 @@ def test_migration_adopts_existing_pre_article_tenant_schema(tmp_path, monkeypat
 
     command.upgrade(_alembic_config(url), "head")
     with sqlite3.connect(db_path) as connection:
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == ARTICLE_REVISION
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == HEAD_REVISION
         assert {"tenants", "wp_connections", "article_jobs", "article_attempts", "article_results"}.issubset(_tables(connection))
         assert connection.execute("SELECT platform, platform_chat_id FROM tenants WHERE id=7").fetchone() == ("telegram", "700")
         assert connection.execute("SELECT site_url FROM wp_connections WHERE tenant_id=7").fetchone() == ("https://legacy.example",)
+
+
+def test_pending_connection_hardening_revokes_unbound_legacy_capabilities(tmp_path, monkeypatch):
+    """A pre-hardening token has no safe target platform, so upgrade must
+    fail closed rather than accidentally allowing it in Telegram or Bale."""
+
+    db_path = tmp_path / "legacy-pairing.sqlite3"
+    url = f"sqlite:///{db_path}"
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    config = _alembic_config(url)
+
+    command.upgrade(config, "20260902_01")
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO pending_connections "
+            "(token, site_url, secret_encrypted, expires_at) VALUES (?, ?, ?, ?)",
+            ("old-token", "https://legacy.example", "encrypted", "2099-01-01 00:00:00"),
+        )
+        connection.commit()
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(db_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(pending_connections)")}
+        assert "token_digest" in columns
+        assert "token" not in columns
+        assert connection.execute("SELECT COUNT(*) FROM pending_connections").fetchone() == (0,)
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == HEAD_REVISION

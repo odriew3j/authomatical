@@ -1,4 +1,8 @@
+import datetime
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from database.repository import (
     ARTICLE_JOB_CLAIMED,
@@ -57,6 +61,117 @@ def test_delete_wp_connection(test_db):
     assert test_db.delete_wp_connection(t) is True
     assert test_db.get_wp_connection(t) is None
     assert test_db.delete_wp_connection(t) is False  # already gone
+
+
+# -------- One-click pending connection repository --------
+def test_pending_connection_is_encrypted_digest_only_and_platform_bound(test_db):
+    token = "A" * 43
+    test_db.create_pending_connection(
+        token=token,
+        platform="telegram",
+        site_url="https://shop.example",
+        secret="pending-site-secret",
+        ttl_seconds=600,
+    )
+
+    assert test_db.pending_connection_is_available(token, "telegram") is True
+    assert test_db.pending_connection_is_available(token, "bale") is False
+    # A wrong-platform bot cannot consume or invalidate the Telegram link.
+    assert test_db.consume_pending_connection(token, "bale") is None
+    assert test_db.pending_connection_is_available(token, "telegram") is True
+
+    import database.db as dbmod
+    with sqlite3.connect(dbmod.engine.url.database) as raw:
+        columns = {row[1] for row in raw.execute("PRAGMA table_info(pending_connections)")}
+        row = raw.execute(
+            "SELECT token_digest, platform, secret_encrypted FROM pending_connections"
+        ).fetchone()
+    assert "token" not in columns
+    assert row[0] != token
+    assert row[1] == "telegram"
+    assert "pending-site-secret" not in row[2]
+
+    assert test_db.consume_pending_connection(token, "telegram") == {
+        "site_url": "https://shop.example",
+        "secret": "pending-site-secret",
+    }
+    # Conditional consume means only the first caller can get credentials.
+    assert test_db.consume_pending_connection(token, "telegram") is None
+
+
+def test_pending_connection_concurrent_consumers_have_one_winner(test_db):
+    token = "C" * 43
+    test_db.create_pending_connection(
+        token=token,
+        platform="telegram",
+        site_url="https://shop.example",
+        secret="one-time-secret",
+        ttl_seconds=600,
+    )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(
+            lambda _unused: test_db.consume_pending_connection(token, "telegram"),
+            range(4),
+        ))
+
+    winners = [result for result in results if result is not None]
+    assert winners == [{"site_url": "https://shop.example", "secret": "one-time-secret"}]
+
+
+def test_pending_connection_rejects_expired_and_duplicate_capabilities(test_db):
+    token = "B" * 43
+    test_db.create_pending_connection(
+        token=token,
+        platform="bale",
+        site_url="https://shop.example",
+        secret="secret",
+        ttl_seconds=600,
+    )
+    with pytest.raises(ValueError, match="token already registered"):
+        test_db.create_pending_connection(
+            token=token,
+            platform="bale",
+            site_url="https://other.example",
+            secret="other-secret",
+            ttl_seconds=600,
+        )
+
+    import database.db as dbmod
+    from database.models import PendingConnection
+    with dbmod.SessionLocal() as session:
+        row = session.query(PendingConnection).one()
+        row.expires_at = datetime.datetime.utcnow() - datetime.timedelta(seconds=1)
+        session.commit()
+
+    assert test_db.pending_connection_is_available(token, "bale") is False
+    assert test_db.consume_pending_connection(token, "bale") is None
+    # The expired digest remains as a short tombstone, so a captured request
+    # cannot recreate this same capability before its HMAC freshness expires.
+    with pytest.raises(ValueError, match="token already registered"):
+        test_db.create_pending_connection(
+            token=token,
+            platform="bale",
+            site_url="https://shop.example",
+            secret="secret",
+            ttl_seconds=600,
+        )
+
+    # Cleanup eventually frees a digest-only tombstone. The web endpoint's
+    # signed-request freshness check prevents an old captured HTTP body from
+    # exploiting that future reuse window.
+    with dbmod.SessionLocal() as session:
+        row = session.query(PendingConnection).one()
+        row.expires_at = datetime.datetime.utcnow() - datetime.timedelta(days=2)
+        session.commit()
+    test_db.create_pending_connection(
+        token=token,
+        platform="bale",
+        site_url="https://shop.example",
+        secret="fresh-secret",
+        ttl_seconds=600,
+    )
+    assert test_db.consume_pending_connection(token, "bale")["secret"] == "fresh-secret"
 
 
 # -------- Durable Article job repository --------

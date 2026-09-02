@@ -148,6 +148,132 @@ async def test_article_submission_does_not_publish_when_database_creation_fails(
     assert any("دیتابیس" in call.args[0] for call in update.message.reply_text.await_args_list)
 
 
+@pytest.mark.asyncio
+async def test_start_consumes_only_the_matching_platform_pairing_token(monkeypatch):
+    token = "C" * 43
+    update = _update()
+    context = SimpleNamespace(
+        user_data={},
+        args=["connect_" + token],
+        application=SimpleNamespace(bot_data={"platform": "telegram"}),
+    )
+    consume = MagicMock(return_value={"site_url": "https://shop.example", "secret": "never-display"})
+    verify = AsyncMock(return_value=True)
+
+    monkeypatch.setattr(handlers, "get_tenant_id", lambda *_args: 71)
+    monkeypatch.setattr(handlers, "consume_pending_connection", consume)
+    monkeypatch.setattr(handlers, "_verify_and_save_site", verify)
+
+    await handlers.start(update, context)
+
+    consume.assert_called_once_with(token, "telegram")
+    verify.assert_awaited_once_with(
+        update,
+        context,
+        71,
+        "https://shop.example",
+        "never-display",
+        strict_one_click=True,
+    )
+    # The one-time secret is never sent in a chat reply before verification.
+    assert all("never-display" not in call.args[0] for call in update.message.reply_text.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_start_rejects_malformed_or_wrong_platform_pairing_without_save(monkeypatch):
+    update = _update()
+    malformed_context = SimpleNamespace(
+        user_data={},
+        args=["connect_too-short"],
+        application=SimpleNamespace(bot_data={"platform": "telegram"}),
+    )
+    consume = MagicMock()
+    verify = AsyncMock()
+    menu = AsyncMock()
+
+    monkeypatch.setattr(handlers, "get_tenant_id", lambda *_args: 72)
+    monkeypatch.setattr(handlers, "consume_pending_connection", consume)
+    monkeypatch.setattr(handlers, "_verify_and_save_site", verify)
+    monkeypatch.setattr(handlers, "show_main_menu", menu)
+
+    await handlers.start(update, malformed_context)
+    consume.assert_not_called()
+    verify.assert_not_awaited()
+
+    token = "D" * 43
+    wrong_platform_context = SimpleNamespace(
+        user_data={},
+        args=["connect_" + token],
+        application=SimpleNamespace(bot_data={"platform": "bale"}),
+    )
+    consume.return_value = None  # repository reports an intended Telegram token as unavailable to Bale
+
+    await handlers.start(update, wrong_platform_context)
+
+    consume.assert_called_once_with(token, "bale")
+    verify.assert_not_awaited()
+    assert any("ربات دیگری" in call.args[0] for call in update.message.reply_text.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_failed_site_verification_never_overwrites_a_tenant_connection(monkeypatch):
+    update = _update()
+    context = SimpleNamespace(user_data={})
+    saved = MagicMock()
+    menu = AsyncMock()
+
+    class RejectingSite:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def ping(self):
+            raise handlers.SiteConnectorError("invalid secret")
+
+    monkeypatch.setattr(handlers, "assert_site_host_is_public", lambda _url: None)
+    monkeypatch.setattr(handlers, "SiteConnectorClient", RejectingSite)
+    monkeypatch.setattr(handlers, "save_wp_connection", saved)
+    monkeypatch.setattr(handlers, "show_main_menu", menu)
+
+    assert await handlers._verify_and_save_site(
+        update,
+        context,
+        73,
+        "https://shop.example",
+        "bad",
+        strict_one_click=True,
+    ) is False
+    saved.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_one_click_requires_a_successful_matching_ping_before_save(monkeypatch):
+    update = _update()
+    context = SimpleNamespace(user_data={})
+    saved = MagicMock()
+
+    class UnconfirmedSite:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def ping(self):
+            return {"success": False, "site_url": "https://shop.example"}
+
+    monkeypatch.setattr(handlers, "assert_site_host_is_public", lambda _url: None)
+    monkeypatch.setattr(handlers, "SiteConnectorClient", UnconfirmedSite)
+    monkeypatch.setattr(handlers, "save_wp_connection", saved)
+    monkeypatch.setattr(handlers, "show_main_menu", AsyncMock())
+
+    assert await handlers._verify_and_save_site(
+        update,
+        context,
+        74,
+        "https://shop.example",
+        "secret",
+        strict_one_click=True,
+    ) is False
+    saved.assert_not_called()
+
+
 def test_product_flow_includes_grounding_steps_and_allows_notes_to_be_skipped():
     keys = [key for key, _question in handlers.PRODUCT_STEPS]
     assert keys[:3] == ["title", "product_type", "user_notes"]

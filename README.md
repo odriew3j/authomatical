@@ -6,7 +6,7 @@ Authomatical یک ربات چندکاربره برای **بله** و **تلگر�
 
 ## قابلیت‌های اصلی
 
-- اتصال امن سایت WordPress از داخل گفتگو، بدون ارسال رمز عبور wp-admin
+- اتصال امن سایت WordPress با دکمه/QR یک‌کلیکی برای بله یا تلگرام، بدون ارسال رمز عبور wp-admin یا کپی‌کردن secret در چت (مسیر دستی فقط برای بازیابی باقی مانده است)
 - ساخت محصول و مقاله هر دو با مراحل «نوع/موضوع» و «توضیحات اختیاری» برای تولید محتوای فارسی دقیق‌تر و بدون کلی‌گویی
 - slug انگلیسی و یکتا برای محصول و مقاله، با اعتبارسنجی هم در Python و هم در افزونهٔ WordPress
 - PostgreSQL به‌عنوان منبع پایدار درخواست، تلاش‌ها، نتیجه و وضعیت مقاله؛ Redis فقط صف اجرای `job_id` و فضای موقت است
@@ -20,12 +20,12 @@ Authomatical یک ربات چندکاربره برای **بله** و **تلگر�
 
 ```bash
 cp .env.example .env
-# مقدارهای OPENROUTER_API_KEY، SECRET_KEY، POSTGRES_PASSWORD و توکن bot را در .env وارد کنید.
-docker compose --profile telegram up -d --build
-# یا: docker compose --profile bale up -d --build
+# مقدارهای OPENROUTER_API_KEY، SECRET_KEY، POSTGRES_PASSWORD، توکن و username هر bot را در .env وارد کنید.
+docker compose --profile telegram --profile connect up -d --build
+# یا: docker compose --profile bale --profile connect up -d --build
 ```
 
-سپس افزونهٔ `wp-content/plugins/odview-sync` را روی سایت WordPress نصب/فعال کنید، در ربات `/start` بزنید و گزینهٔ `1` را برای اتصال سایت انتخاب کنید.
+سرویس `connect` را در یک دامنهٔ **عمومی HTTPS** پشت reverse proxy منتشر کنید (خود پورت Docker به‌تنهایی HTTPS نیست). سپس افزونهٔ `wp-content/plugins/odview-sync` را روی سایت WordPress نصب/فعال کنید، در صفحهٔ «اتصال به بازو» URL همین سرویس را یک‌بار ذخیره کنید و دکمهٔ تلگرام یا بله را بزنید. لینک/QR فقط چند دقیقه معتبر است و ربات اتصال را خودکار بررسی می‌کند. داشبورد `web` را عمومی نکنید؛ برای آن مسیر authentication جداگانه یا شبکهٔ خصوصی لازم است.
 
 راهنمای کامل Docker، اجرای محلی، نصب افزونه، migration، تست و رفع خطاها در **[DEPLOY.md](DEPLOY.md)** است.
 
@@ -57,7 +57,9 @@ tests/          تست‌های unit و integration سبک
 
 - `.env` و کلیدهای API را commit نکنید.
 - `SECRET_KEY` را پس از ذخیره‌شدن اتصال سایت‌ها تغییر ندهید؛ در غیر این صورت secretهای قبلی قابل خواندن نخواهند بود.
-- secret نمایش‌داده‌شده در صفحهٔ «اتصال به بازو» WordPress معادل دسترسی انتشار از طریق ربات است؛ آن را خصوصی نگه دارید.
+- secret نمایش‌داده‌شده در بخش دستی صفحهٔ «اتصال به بازو» WordPress معادل دسترسی انتشار از طریق ربات است؛ آن را خصوصی نگه دارید.
+- اتصال یک‌کلیکی یک capability تصادفی ۲۵۶بیتی، تک‌بارمصرف و کوتاه‌عمر است. body ثبت با HMAC و زمان صدور امضا می‌شود تا replay قدیمی پذیرفته نشود؛ secret در URL، QR یا پاسخ AJAX برگردانده نمی‌شود و در PostgreSQL فقط به‌صورت رمزنگاری‌شده نگه‌داری می‌شود؛ خود token نیز فقط به‌شکل digest ذخیره می‌شود.
+- فقط سرویس `connect` را برای URL ثبت‌شده در افزونه عمومی کنید و آن را پشت HTTPS قرار دهید. endpoint قبل از ثبت، HMAC و پاسخ authenticated `/ping` افزونه را بررسی می‌کند؛ با این وجود secret و QR را مانند credential موقت خصوصی نگه دارید.
 
 ## مجوز
 

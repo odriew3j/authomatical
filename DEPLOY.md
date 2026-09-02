@@ -30,6 +30,14 @@ SECRET_KEY=کلید-واقعی-Fernet
 POSTGRES_PASSWORD=یک-رمز-طولانی-و-URL-safe
 TELEGRAM_BOT_TOKEN=توکن-تلگرام-درصورت-استفاده
 BALE_BOT_TOKEN=توکن-بله-درصورت-استفاده
+# username عمومی bot بدون @؛ برای دکمه/QR یک‌کلیکی لازم است
+TELEGRAM_BOT_USERNAME=your_telegram_bot
+BALE_BOT_USERNAME=your_bale_bot
+# capability اتصال فقط ۱ تا ۱۵ دقیقه معتبر می‌ماند (پیش‌فرض: ۶۰۰)
+CONNECT_TOKEN_TTL_SECONDS=600
+CONNECT_VERIFICATION_TIMEOUT_SECONDS=15
+# request امضاشده فقط تا ۵ دقیقه قابل‌قبول است (برای جلوگیری از replay)
+CONNECT_REGISTRATION_PROOF_MAX_AGE_SECONDS=300
 ```
 
 برای `POSTGRES_PASSWORD` از حروف و اعداد استفاده کنید، یا اگر از کاراکترهایی مانند `@` و `:` استفاده می‌کنید آن‌ها را URL-encode کنید؛ Docker Compose این مقدار را در URL اتصال PostgreSQL قرار می‌دهد.
@@ -47,10 +55,13 @@ BALE_BOT_TOKEN=توکن-بله-درصورت-استفاده
    ```
 
 2. در WordPress به **Plugins → Add New → Upload Plugin** بروید، فایل zip را نصب و افزونه را فعال کنید.
-3. از منوی **«اتصال به بازو»** آدرس سایت و کلید امنیتی را بردارید.
-4. در ربات `/start` را بفرستید، گزینهٔ `1` را انتخاب کنید، سپس آدرس و کلید را وارد کنید.
+3. از منوی **«اتصال به بازو»**، URL عمومی HTTPS سرویس `connect` را یک‌بار وارد و ذخیره کنید (برای نمونه `https://connect.example.com`).
+4. روی **«اتصال با تلگرام»** یا **«اتصال با بله»** بزنید. افزونه به‌صورت server-to-server سایت و کلید خودش را نزد backend تأیید می‌کند، سپس یک لینک و QR کوتاه‌عمر می‌سازد.
+5. لینک را باز کنید یا QR را اسکن کنید. دستور `/start connect_<token>` خودکار به همان worker می‌رسد، worker دوباره سایت را تست می‌کند و اتصال را فقط برای همان platform/chat ذخیره می‌کند. هیچ secretای را کپی یا داخل چت نمی‌فرستید.
 
-کلید افزونه را فقط در چت ربات خودتان وارد کنید. با گزینهٔ «ساخت کلید جدید» در WordPress، اتصال قبلی ربات عمداً نامعتبر می‌شود و باید دوباره وصل شود.
+هر دکمه یک token تصادفی ۲۵۶بیتی، تک‌بارمصرف و کوتاه‌عمر (پیش‌فرض ۱۰ دقیقه) برای **همان پلتفرم** می‌سازد؛ body ثبت هم با secret افزونه و زمان صدور HMAC می‌شود تا replay قدیمی پذیرفته نشود. QR به‌صورت محلی در backend SVG می‌شود و به سرویس QR خارجی فرستاده نمی‌شود. اگر token منقضی/استفاده/برای پلتفرم دیگر باشد یا تأیید سایت شکست بخورد، اتصال قبلی تنانت تغییر نمی‌کند؛ از WordPress دوباره لینک بسازید. برای سایت‌هایی که backend عمومی به آن‌ها دسترسی ندارد، بخش بازشدنی «اتصال دستی / بازیابی» در افزونه مسیر قدیمی را نگه می‌دارد.
+
+کلید افزونه را فقط در مسیر دستی و فقط داخل چت ربات خودتان وارد کنید. با گزینهٔ «ساخت کلید جدید» در WordPress، اتصال قبلی ربات عمداً نامعتبر می‌شود و باید دوباره وصل شود.
 
 ---
 
@@ -59,29 +70,29 @@ BALE_BOT_TOKEN=توکن-بله-درصورت-استفاده
 ### فقط تلگرام
 
 ```bash
-docker compose --profile telegram up -d --build
+docker compose --profile telegram --profile connect up -d --build
 docker compose ps
-docker compose --profile telegram logs -f migrate telegram-worker article-worker
+docker compose --profile telegram --profile connect logs -f migrate telegram-worker article-worker connect
 ```
 
 ### فقط بله
 
 ```bash
-docker compose --profile bale up -d --build
+docker compose --profile bale --profile connect up -d --build
 docker compose ps
-docker compose --profile bale logs -f migrate bale-worker article-worker
+docker compose --profile bale --profile connect logs -f migrate bale-worker article-worker connect
 ```
 
 ### هر دو ربات
 
 ```bash
-docker compose --profile telegram --profile bale up -d --build
-docker compose --profile telegram --profile bale logs -f
+docker compose --profile telegram --profile bale --profile connect up -d --build
+docker compose --profile telegram --profile bale --profile connect logs -f
 ```
 
 Compose به‌ترتیب PostgreSQL و Redis را بالا می‌آورد، سپس `alembic upgrade head` را اجرا می‌کند، و فقط پس از موفقیت migration، workerها را شروع می‌کند. `article-worker` باید همراه هر رباتی که فعال می‌کنید در حال اجرا باشد؛ هر درخواست مقاله ابتدا با یک `article_jobs.id` پایدار در PostgreSQL ثبت می‌شود و Redis فقط همان `job_id` را برای اجرا حمل می‌کند. worker درخواست، tenant، اتصال WordPress، تلاش‌ها و نتیجه را از PostgreSQL می‌خواند/ثبت می‌کند و هرگز بر اساس `platform` یا `chat_id` داخل Redis سایت مقصد را انتخاب نمی‌کند.
 
-### ارتقای پایدارسازی مقاله (PostgreSQL-first)
+### ارتقای schema پایدار (مقاله و اتصال یک‌کلیکی)
 
 قبل از deploy این نسخه از PostgreSQL backup بگیرید و migration را **قبل از restart کردن workerها** اجرا کنید. در Compose، سرویس `migrate` این کار را در اجرای معمول `up` انجام می‌دهد؛ برای اجرای صریح نیز می‌توانید بزنید:
 
@@ -100,6 +111,9 @@ revision جدید سه جدول پایدار می‌سازد:
 - `article_jobs`: درخواست، tenant مالک، وضعیت `PENDING` / `PROCESSING` / `SUCCESS` / `FAILED`، زمان‌ها، خطا و شناسهٔ post وردپرس
 - `article_attempts`: هر اجرای worker با شمارهٔ تلاش، زمان شروع/پایان و خطا
 - `article_results`: خروجی ساخت‌یافتهٔ AI شامل عنوان، slug، فصل‌ها، image prompt و HTML، که **پیش از** انتشار WordPress ثبت می‌شود
+- `pending_connections`: capabilityهای موقت اتصال یک‌کلیکی؛ token خام در آن ذخیره نمی‌شود، فقط digest، پلتفرم مقصد و secret رمزنگاری‌شده نگه‌داری می‌شوند. digest tombstone تا یک روز بعد از expiry باقی می‌ماند تا token مصرف‌شده revive نشود، سپس cleanup می‌شود.
+
+migration سخت‌سازی pairing، recordهای بازِ revision قدیمی را عمداً revoke می‌کند، زیرا آن‌ها platform-bound نبودند. این‌ها فقط لینک‌های موقت‌اند و هیچ tenant connection یا history مقاله‌ای حذف/تغییر نمی‌کند؛ کاربر فقط یک لینک تازه می‌سازد.
 
 پس از migration، bot/web/CLI جدید فقط payload زیر را در Stream می‌نویسد:
 
@@ -119,6 +133,20 @@ docker compose exec redis redis-cli XPENDING article_jobs article_jobs_group
 ```
 
 پیام‌های جدیدی که job آن‌ها به `SUCCESS` یا `FAILED` رسیده است بعد از ثبت وضعیت پایدار ACK می‌شوند؛ خطای رساندن پیام Telegram/Bale نتیجهٔ publish را retry نمی‌کند تا post تکراری ساخته نشود.
+
+### سرویس عمومی اتصال یک‌کلیکی
+
+سرویس profile `connect` عمداً فقط endpointهای زیر را دارد و باید در یک hostname عمومی HTTPS منتشر شود:
+
+```text
+POST /api/connect/register
+GET  /api/connect/qr/<token>.svg?platform=telegram|bale
+GET  /healthz
+```
+
+Container روی `8081` میزبان map می‌شود؛ برای production آن را مستقیماً با HTTP عمومی باز نکنید. یک reverse proxy/TLS terminator (nginx، Caddy، Cloudflare Tunnel و مانند آن) را روی دامنه‌ای مانند `https://connect.example.com` قرار دهید و همین URL ریشه را در افزونه ذخیره کنید. backend پیش از نگه‌داری token، HMAC درخواست و `GET /wp-json/odview/v1/ping` authenticated سایت را بررسی می‌کند؛ URL سایت باید HTTPS، عمومی و قابل resolve باشد و پاسخ DNS خصوصی/loopback رد می‌شود. برای defence-in-depth، egress سرویس را هم طوری محدود کنید که به subnetهای خصوصی/metadata دسترسی نداشته باشد. سپس worker در لحظهٔ بازشدن deep link همان ping بدون follow کردن redirect را دوباره انجام می‌دهد.
+
+> **جداسازی مهم:** profile `web` داشبورد اپراتوری بدون authentication دارد. آن را با دامنه/پورت عمومی `connect` یکی نکنید و برای حل مسئله، همهٔ routeهای dashboard را anonymous نکنید. اگر به‌جای profile `connect` از همان Flask web app پشت proxy استفاده می‌کنید، فقط `/api/connect/*` را public allow کنید و root، `/articles/*`، `/products/*` و `/api/jobs/*` را private/authenticated نگه دارید.
 
 ### داشبورد وب (اختیاری)
 
@@ -289,6 +317,8 @@ python -m pytest tests/test_migrations.py -q
 | `Redis is unavailable` | وضعیت `redis` یا `redis-server` و مقدار `REDIS_URL` را بررسی کنید. درخواست جدید ابتدا در PostgreSQL ثبت و سپس با وضعیت `FAILED` (خطای صف) ذخیره می‌شود؛ پس از رفع Redis یک درخواست تازه ثبت کنید. برای جلوگیری از post تکراری، job شکست‌خورده را خام و کورکورانه requeue نکنید. |
 | خطای 403 یا «کلید امنیتی نامعتبر» | آدرس و secret افزونه را در گزینهٔ 1 دوباره وارد کنید. اگر secret در WordPress regenerate شده، اتصال قبلی معتبر نیست. |
 | خطای 404 افزونه | افزونهٔ ODview Sync را نصب/فعال کنید و URL ریشهٔ سایت را وارد کنید، نه `/wp-admin`. |
+| ساخت لینک یک‌کلیکی ناموفق است | `connect` باید روی HTTPS عمومی باشد، `TELEGRAM_BOT_USERNAME` یا `BALE_BOT_USERNAME` متناظر در `.env` تنظیم شود و backend بتواند URL HTTPS عمومی WordPress را resolve و `/wp-json/odview/v1/ping` را با secret افزونه تأیید کند. سپس `docker compose run --rm migrate` را اجرا کنید. |
+| QR یا لینک می‌گوید منقضی/برای ربات دیگر | هر دکمه token جداگانه و platform-bound می‌سازد. از همان دکمه برای همان bot یک لینک تازه بسازید؛ token را در گروه/جای عمومی منتشر نکنید. |
 | worker دائماً restart می‌شود | `docker compose logs <service>` را ببینید؛ معمولاً توکن bot، `OPENROUTER_API_KEY` یا `SECRET_KEY` ناقص است. |
 | `Name or service not known` یا `ConnectTimeout` در polling | اگر چند بار اول رخ دهد و بعد `200 OK` ببینید، اختلال موقت DNS/TLS بوده و worker خودکار retry می‌کند. اگر ادامه‌دار است، DNS/فایروال/VPN میزبان را بررسی کنید: `docker compose exec bale-worker getent hosts tapi.bale.ai` و برای تلگرام `docker compose exec telegram-worker getent hosts api.telegram.org`. زمان‌های `BOT_*` در `.env` قابل تنظیم‌اند. |
 | URLهای Bot API همراه token در لاگ قدیمی دیده می‌شوند | token را فوراً از BotFather (تلگرام) یا پنل بله regenerate/revoke کنید، سپس `.env` را به‌روزرسانی و workerها را recreate کنید. نسخهٔ فعلی URLهای موفق httpx را log نمی‌کند و formatter آن tokenها را redact می‌کند. |

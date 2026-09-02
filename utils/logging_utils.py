@@ -22,6 +22,14 @@ _BEARER_RE = re.compile(
 )
 _ODVIEW_SECRET_RE = re.compile(r"(?i)(\bx-odview-secret\s*[:=]\s*)[^\s,]+")
 _OPENROUTER_KEY_RE = re.compile(r"\bsk-or-v1-[A-Za-z0-9_-]+")
+# One-click pairing payloads are bearer capabilities too. The QR route carries
+# the opaque token in its path, while Telegram/Bale deep links carry it after
+# connect_. Redact either form if a proxy/framework happens to log a URL.
+_CONNECT_START_TOKEN_RE = re.compile(r"(?P<prefix>\bconnect_)[A-Za-z0-9_-]{43,56}(?![A-Za-z0-9_-])")
+_CONNECT_QR_TOKEN_RE = re.compile(r"(?P<prefix>/api/connect/qr/)[A-Za-z0-9_-]{43,56}(?P<suffix>\.svg\b)")
+_CONNECT_REQUEST_SECRET_RE = re.compile(
+    r"(?i)(?P<prefix>['\"]?(?:token|secret|x-odview-connect-proof)['\"]?\s*[:=]\s*['\"]?)(?P<secret>[^\s,}\]\"']+)"
+)
 
 
 def redact_sensitive_text(value: Any) -> str:
@@ -31,6 +39,9 @@ def redact_sensitive_text(value: Any) -> str:
     text = _BOT_TOKEN_RE.sub("<redacted-bot-token>", text)
     text = _BEARER_RE.sub(r"\g<prefix><redacted>", text)
     text = _ODVIEW_SECRET_RE.sub(r"\1<redacted>", text)
+    text = _CONNECT_REQUEST_SECRET_RE.sub(r"\g<prefix><redacted>", text)
+    text = _CONNECT_START_TOKEN_RE.sub(r"\g<prefix><redacted-connect-token>", text)
+    text = _CONNECT_QR_TOKEN_RE.sub(r"\g<prefix><redacted-connect-token>\g<suffix>", text)
     return _OPENROUTER_KEY_RE.sub("<redacted-openrouter-key>", text)
 
 

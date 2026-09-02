@@ -30,6 +30,40 @@ def test_redacts_authorization_and_site_secrets():
     assert "X-ODVIEW-SECRET: <redacted>" in redacted
 
 
+def test_redacts_one_click_request_json_fields():
+    message = "{'token': 'opaque-token', 'secret': 'site-secret', 'X-ODVIEW-CONNECT-PROOF': 'proof-value'}"
+
+    redacted = redact_sensitive_text(message)
+
+    for value in ("opaque-token", "site-secret", "proof-value"):
+        assert value not in redacted
+
+
+def test_redacts_one_click_pairing_tokens_from_deep_and_qr_urls():
+    connect_token = "Abcdefghijklmnopqrstuvwxyz0123456789_-ABCDEfghi"
+    message = (
+        "https://t.me/MyBot?start=connect_" + connect_token + " "
+        "GET /api/connect/qr/" + connect_token + ".svg?platform=telegram"
+    )
+
+    redacted = redact_sensitive_text(message)
+
+    assert connect_token not in redacted
+    assert "connect_<redacted-connect-token>" in redacted
+    assert "/api/connect/qr/<redacted-connect-token>.svg" in redacted
+
+
+def test_legacy_stdout_log_helper_uses_the_redactor(capsys):
+    from utils.helpers import log
+
+    token = "Z" * 43
+    log("pairing is connect_" + token)
+
+    output = capsys.readouterr().out
+    assert token not in output
+    assert "<redacted-connect-token>" in output
+
+
 def test_redacting_formatter_cleans_exception_tracebacks_too():
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
