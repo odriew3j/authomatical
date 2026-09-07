@@ -1,0 +1,16 @@
+# Caddy gets and renews a Let's Encrypt certificate for this domain
+# automatically — no certbot, no manual renewal. Set ODVIEW_CONNECT_DOMAIN
+# in .env before starting this service (e.g. api.authomatical.ir).
+#
+# reverse_proxy resolves "connect" via Docker's internal DNS on the compose
+# network — connect's own port is never published to the public internet.
+{$ODVIEW_CONNECT_DOMAIN} {
+    reverse_proxy connect:8080
+
+    encode gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+    }
+}

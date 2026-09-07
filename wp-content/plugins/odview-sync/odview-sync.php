@@ -19,7 +19,7 @@ define('ODVIEW_SYNC_PLUGIN_FILE', __FILE__);
 // before plugins load), e.g.:
 //   define('ODVIEW_SYNC_BACKEND_URL', 'https://dev-tunnel.example.com');
 if (!defined('ODVIEW_SYNC_BACKEND_URL')) {
-    define('ODVIEW_SYNC_BACKEND_URL', 'https://red-essay-finances-brunette.trycloudflare.com');
+    define('ODVIEW_SYNC_BACKEND_URL', 'https://api.odview.ir');
 }
 
 // Auto Load Classes

@@ -9,7 +9,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U authomatical -d authomatical"]
       interval: 5s
@@ -22,7 +22,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -115,7 +115,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://authomatical:${POSTGRES_PASSWORD:-changeme}@postgres:5432/authomatical
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,7 +138,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://authomatical:${POSTGRES_PASSWORD:-changeme}@postgres:5432/authomatical
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,7 +147,29 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Public HTTPS entry point for a real deployment: gets a Let's Encrypt
+  # certificate automatically and forwards to `connect` over the internal
+  # compose network (no need to publish connect's port publicly for this).
+  # Not used in local development — enable with:
+  #   docker compose --profile proxy --profile connect up -d --build
+  caddy:
+    profiles: ["proxy"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - connect
+
 volumes:
   postgres_data:
   redis_data:
   uploads:
+  caddy_data:
+  caddy_config:
