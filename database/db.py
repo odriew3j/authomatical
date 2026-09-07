@@ -41,10 +41,13 @@ def reset_for_tests(database_url: str):
     engine = create_engine(database_url, connect_args=connect_args, future=True)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
-    # database/repository.py did `from database.db import SessionLocal`,
-    # which bound its own module-level name to the *old* factory — patch
-    # it in place so repository functions pick up the new one too.
+    # database/repository.py and database/licensing.py each did
+    # `from database.db import SessionLocal`, which bound their own
+    # module-level name to the *old* factory — patch both in place so their
+    # functions pick up the new one too.
     import database.repository as repo
     repo.SessionLocal = SessionLocal
+    import database.licensing as licensing
+    licensing.SessionLocal = SessionLocal
 
     init_db()

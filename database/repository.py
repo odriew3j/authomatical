@@ -6,6 +6,7 @@ it is never consulted for tenant ownership, Article request data, lifecycle
 state, results, or WordPress connection selection.
 """
 import datetime
+import hmac
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -238,6 +239,36 @@ def get_wp_connection(tenant_id: int) -> dict | None:
         if not conn:
             return None
         return {"site_url": conn.site_url, "secret": decrypt(conn.secret_encrypted)}
+
+
+def find_wp_connection_status(site_url: str, secret: str) -> dict | None:
+    """Read-only lookup for the WordPress plugin's own connection-status
+    check: is *some* tenant already actively connected to this exact site
+    with this exact secret? A constant-time compare of the caller's secret
+    against each candidate's decrypted stored secret is itself proof of
+    possession here — unlike /register, this never re-pings the WordPress
+    site, since it only reveals whether a pairing that already passed that
+    proof still exists. Never used to authorize anything other than which UI
+    state the settings page renders."""
+
+    with SessionLocal() as session:
+        rows = (
+            session.query(WPConnection, Tenant)
+            .join(Tenant, Tenant.id == WPConnection.tenant_id)
+            .filter(WPConnection.site_url == site_url, WPConnection.verified.is_(True))
+            .all()
+        )
+        for conn, tenant in rows:
+            try:
+                stored_secret = decrypt(conn.secret_encrypted)
+            except Exception:
+                continue
+            if hmac.compare_digest(stored_secret, secret):
+                return {
+                    "platform": tenant.platform,
+                    "connected_at": _iso(conn.connected_at),
+                }
+        return None
 
 
 def delete_wp_connection(tenant_id: int) -> bool:

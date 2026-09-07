@@ -55,8 +55,8 @@ CONNECT_REGISTRATION_PROOF_MAX_AGE_SECONDS=300
    ```
 
 2. در WordPress به **Plugins → Add New → Upload Plugin** بروید، فایل zip را نصب و افزونه را فعال کنید.
-3. از منوی **«اتصال به بازو»**، URL عمومی HTTPS سرویس `connect` را یک‌بار وارد و ذخیره کنید (برای نمونه `https://connect.example.com`).
-4. روی **«اتصال با تلگرام»** یا **«اتصال با بله»** بزنید. افزونه به‌صورت server-to-server سایت و کلید خودش را نزد backend تأیید می‌کند، سپس یک لینک و QR کوتاه‌عمر می‌سازد.
+3. آدرس عمومی سرویس `connect` را یک‌بار **در کد پلاگین** (ثابت `ODVIEW_SYNC_BACKEND_URL` در `odview-sync.php`) تنظیم کنید — این مقدار برای همهٔ مشتری‌ها یکی است و کاربر نهایی هرگز آن را نمی‌بیند یا وارد نمی‌کند. برای تست local/staging، بدون تغییر کد یا build جدا، همین یک خط را به `wp-config.php` همان سایت اضافه کنید: `define('ODVIEW_SYNC_BACKEND_URL', 'https://your-tunnel-url');` (باید پیش از بارگذاری پلاگین‌ها اجرا شود، یعنی قبل از خط `require_once ABSPATH . 'wp-settings.php'`).
+4. از منوی **«اتصال به بازو»** روی **«اتصال با تلگرام»** یا **«اتصال با بله»** بزنید. افزونه به‌صورت server-to-server سایت و کلید خودش را نزد backend تأیید می‌کند، سپس یک لینک و QR کوتاه‌عمر می‌سازد.
 5. لینک را باز کنید یا QR را اسکن کنید. دستور `/start connect_<token>` خودکار به همان worker می‌رسد، worker دوباره سایت را تست می‌کند و اتصال را فقط برای همان platform/chat ذخیره می‌کند. هیچ secretای را کپی یا داخل چت نمی‌فرستید.
 
 هر دکمه یک token تصادفی ۲۵۶بیتی، تک‌بارمصرف و کوتاه‌عمر (پیش‌فرض ۱۰ دقیقه) برای **همان پلتفرم** می‌سازد؛ body ثبت هم با secret افزونه و زمان صدور HMAC می‌شود تا replay قدیمی پذیرفته نشود. QR به‌صورت محلی در backend SVG می‌شود و به سرویس QR خارجی فرستاده نمی‌شود. اگر token منقضی/استفاده/برای پلتفرم دیگر باشد یا تأیید سایت شکست بخورد، اتصال قبلی تنانت تغییر نمی‌کند؛ از WordPress دوباره لینک بسازید. برای سایت‌هایی که backend عمومی به آن‌ها دسترسی ندارد، بخش بازشدنی «اتصال دستی / بازیابی» در افزونه مسیر قدیمی را نگه می‌دارد.
@@ -140,6 +140,7 @@ docker compose exec redis redis-cli XPENDING article_jobs article_jobs_group
 
 ```text
 POST /api/connect/register
+POST /api/connect/status
 GET  /api/connect/qr/<token>.svg?platform=telegram|bale
 GET  /healthz
 ```

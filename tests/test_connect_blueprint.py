@@ -286,3 +286,112 @@ def test_qr_is_generated_locally_only_for_an_active_matching_platform_token(clie
     response = client.get(f"/api/connect/qr/{TOKEN}.svg?platform=not-a-bot")
     assert response.status_code == 404
     available.assert_not_called()
+
+
+def _status_headers(site_url=SITE_URL, secret=SECRET, issued_at=ISSUED_AT):
+    return {
+        "X-ODVIEW-CONNECT-PROOF": connect_security.status_proof(secret, site_url, issued_at),
+    }
+
+
+def _status_body(site_url=SITE_URL, secret=SECRET, issued_at=ISSUED_AT):
+    return {"site_url": site_url, "secret": secret, "issued_at": issued_at}
+
+
+def test_status_reports_not_connected_when_no_matching_record_exists(client, test_db):
+    response = client.post(
+        "/api/connect/status", json=_status_body(), headers=_status_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok", "connected": False}
+
+
+def test_status_reports_connected_with_platform_after_a_real_pairing(client, test_db):
+    tenant_id = test_db.get_or_create_tenant("bale", "900")
+    test_db.save_wp_connection(tenant_id, SITE_URL, SECRET, verified=True)
+
+    response = client.post(
+        "/api/connect/status", json=_status_body(), headers=_status_headers(),
+    )
+
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["status"] == "ok"
+    assert body["connected"] is True
+    assert body["platform"] == "bale"
+    assert "connected_at" in body
+    # The plugin only ever needs platform/connected_at to render its UI —
+    # the secret must never round-trip back to the browser.
+    assert SECRET not in response.get_data(as_text=True)
+
+
+def test_status_does_not_match_a_different_sites_connection(client, test_db):
+    tenant_id = test_db.get_or_create_tenant("telegram", "901")
+    test_db.save_wp_connection(tenant_id, "https://another-shop.example", SECRET, verified=True)
+
+    response = client.post(
+        "/api/connect/status", json=_status_body(), headers=_status_headers(),
+    )
+
+    assert response.get_json()["connected"] is False
+
+
+def test_status_does_not_match_a_wrong_secret_for_the_same_site(client, test_db):
+    tenant_id = test_db.get_or_create_tenant("telegram", "902")
+    test_db.save_wp_connection(tenant_id, SITE_URL, "a-completely-different-secret", verified=True)
+
+    response = client.post(
+        "/api/connect/status", json=_status_body(), headers=_status_headers(),
+    )
+
+    assert response.get_json()["connected"] is False
+
+
+def test_status_rejects_a_bad_or_missing_proof_without_querying_the_database(client, monkeypatch):
+    lookup = MagicMock()
+    monkeypatch.setattr(connect_module, "find_wp_connection_status", lookup)
+
+    response = client.post("/api/connect/status", json=_status_body())
+    assert response.status_code == 403
+    lookup.assert_not_called()
+
+    bad_headers = {"X-ODVIEW-CONNECT-PROOF": connect_security.status_proof("wrong-secret", SITE_URL, ISSUED_AT)}
+    response = client.post("/api/connect/status", json=_status_body(), headers=bad_headers)
+    assert response.status_code == 403
+    lookup.assert_not_called()
+
+
+def test_status_rejects_an_expired_proof_without_querying_the_database(client, monkeypatch):
+    lookup = MagicMock()
+    monkeypatch.setattr(connect_module, "find_wp_connection_status", lookup)
+
+    stale_issued_at = ISSUED_AT - connect_module.STATUS_PROOF_MAX_AGE_SECONDS - 5
+    response = client.post(
+        "/api/connect/status",
+        json=_status_body(issued_at=stale_issued_at),
+        headers=_status_headers(issued_at=stale_issued_at),
+    )
+
+    assert response.status_code == 400
+    lookup.assert_not_called()
+
+
+def test_status_rejects_extra_fields_and_a_private_site_url(client, monkeypatch):
+    lookup = MagicMock()
+    monkeypatch.setattr(connect_module, "find_wp_connection_status", lookup)
+
+    body = _status_body()
+    body["extra"] = "not allowed"
+    response = client.post("/api/connect/status", json=body, headers=_status_headers())
+    assert response.status_code == 400
+    lookup.assert_not_called()
+
+    private_body = _status_body(site_url="https://localhost")
+    response = client.post(
+        "/api/connect/status",
+        json=private_body,
+        headers=_status_headers(site_url="https://localhost"),
+    )
+    assert response.status_code == 400
+    lookup.assert_not_called()

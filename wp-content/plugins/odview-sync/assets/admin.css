@@ -38,38 +38,26 @@
     line-height: 1.8;
 }
 
-.odview-backend-form {
-    margin: 24px 0 20px;
-    padding: 18px;
-    border: 1px solid #dcdcde;
-    border-radius: 8px;
-    background: #fff;
-}
-
-.odview-backend-form > label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: 600;
-}
-
-.odview-backend-form__controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-}
-
-.odview-backend-form__controls input {
-    min-width: min(100%, 380px);
-    flex: 1 1 380px;
-}
-
-.odview-backend-form .description {
-    margin: 10px 0 0;
-}
-
 .odview-pairing-app {
     padding-top: 4px;
+}
+
+.odview-connected-card {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    max-width: 620px;
+    padding: 18px 20px;
+    border: 1px solid #8fce9a;
+    border-radius: 10px;
+    background: #f3fbf4;
+}
+
+.odview-connected-card__line {
+    margin: 0;
+    font-weight: 600;
+    flex: 1 1 300px;
 }
 
 .odview-pairing-actions {
@@ -162,11 +150,6 @@
 @media (max-width: 600px) {
     .odview-pairing-card {
         padding: 20px;
-    }
-
-    .odview-backend-form__controls input {
-        flex-basis: 100%;
-        min-width: 100%;
     }
 
     .odview-pairing-result__card {

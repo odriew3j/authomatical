@@ -55,3 +55,26 @@ def test_connect_hmac_binds_platform_site_token_and_issue_time():
     assert not security.has_valid_connect_proof(
         proof, "secret", "telegram", "https://shop.example", "A" * 43, 101,
     )
+
+
+def test_status_hmac_binds_site_and_issue_time():
+    proof = security.status_proof("secret", "https://shop.example", 100)
+
+    assert security.has_valid_status_proof(proof, "secret", "https://shop.example", 100)
+    assert not security.has_valid_status_proof(proof, "secret", "https://other.example", 100)
+    assert not security.has_valid_status_proof(proof, "secret", "https://shop.example", 101)
+    assert not security.has_valid_status_proof(proof, "wrong-secret", "https://shop.example", 100)
+
+
+def test_status_and_register_proofs_are_not_interchangeable():
+    """A captured /register proof must not also authenticate a /status
+    request for the same secret/site (and vice versa) — the two message
+    shapes are deliberately different (see status_proof's docstring)."""
+
+    register = security.connect_proof("secret", "telegram", "https://shop.example", "A" * 43, 100)
+    assert not security.has_valid_status_proof(register, "secret", "https://shop.example", 100)
+
+    status = security.status_proof("secret", "https://shop.example", 100)
+    assert not security.has_valid_connect_proof(
+        status, "secret", "telegram", "https://shop.example", "A" * 43, 100,
+    )

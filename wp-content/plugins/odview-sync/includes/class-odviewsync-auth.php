@@ -5,15 +5,14 @@ if (!defined('ABSPATH')) exit;
 class ODviewSync_Auth {
 
     private $option_key = 'odview_sync_secret';
-    private $backend_url_option_key = 'odview_sync_backend_url';
 
     public function __construct() {
         add_action('admin_menu', [$this, 'add_menu']);
         add_action('admin_init', [$this, 'generate_secret']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
         add_action('admin_post_odview_sync_regenerate', [$this, 'handle_regenerate']);
-        add_action('admin_post_odview_sync_save_backend_url', [$this, 'handle_save_backend_url']);
         add_action('wp_ajax_odview_sync_generate_connect_token', [$this, 'handle_generate_connect_token']);
+        add_action('wp_ajax_odview_sync_check_connect_status', [$this, 'handle_check_connect_status']);
     }
 
     // Generate on first install. This secret authenticates only server-to-server
@@ -58,21 +57,18 @@ class ODviewSync_Auth {
         exit;
     }
 
+    // The backend address is a developer-controlled constant (see
+    // odview-sync.php), never a site owner's option. This only re-validates
+    // the constant's shape — the same rules the old settings-page field
+    // enforced — so a bad value fails loudly instead of silently building a
+    // broken QR/deep-link URL.
     private function backend_url() {
-        $value = get_option($this->backend_url_option_key, '');
-        return is_string($value) ? untrailingslashit($value) : '';
-    }
-
-    private function normalise_backend_url($value) {
-        if (!is_string($value)) {
+        $url = defined('ODVIEW_SYNC_BACKEND_URL') ? untrailingslashit((string) ODVIEW_SYNC_BACKEND_URL) : '';
+        if (!$url) {
             return '';
         }
-        $url = untrailingslashit(esc_url_raw(trim($value), ['https']));
         $parts = wp_parse_url($url);
-        if (!$url || !$parts || empty($parts['host']) || empty($parts['scheme'])) {
-            return '';
-        }
-        if (strtolower($parts['scheme']) !== 'https') {
+        if (!$parts || empty($parts['host']) || empty($parts['scheme']) || strtolower($parts['scheme']) !== 'https') {
             return '';
         }
         if (isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment']) ||
@@ -81,8 +77,6 @@ class ODviewSync_Auth {
             // path prefix rather than silently constructing a broken QR URL.
             return '';
         }
-        // wp_http_validate_url also rejects malformed URLs before wp_safe_remote_post
-        // is ever allowed to make the server-side registration request.
         return wp_http_validate_url($url) ? $url : '';
     }
 
@@ -90,22 +84,6 @@ class ODviewSync_Auth {
         $url = add_query_arg($args, admin_url('admin.php?page=odview-sync'));
         wp_safe_redirect($url);
         exit;
-    }
-
-    public function handle_save_backend_url() {
-        if (!current_user_can('manage_options')) {
-            wp_die('دسترسی غیرمجاز');
-        }
-        check_admin_referer('odview_sync_save_backend_url');
-
-        $raw_url = isset($_POST['backend_url']) ? wp_unslash($_POST['backend_url']) : '';
-        $backend_url = $this->normalise_backend_url($raw_url);
-        if (!$backend_url) {
-            $this->redirect_to_settings(['backend_error' => 1]);
-        }
-
-        update_option($this->backend_url_option_key, $backend_url, false);
-        $this->redirect_to_settings(['backend_saved' => 1]);
     }
 
     private function generated_connect_token() {
@@ -172,7 +150,7 @@ class ODviewSync_Auth {
 
         $backend_url = $this->backend_url();
         if (!$backend_url) {
-            wp_send_json_error(['message' => 'ابتدا آدرس HTTPS سرور بازو را ذخیره کنید.'], 400);
+            wp_send_json_error(['message' => 'سرویس اتصال به‌درستی پیکربندی نشده است. با پشتیبانی تماس بگیرید.'], 500);
         }
 
         $site_url = untrailingslashit(get_site_url());
@@ -246,6 +224,70 @@ class ODviewSync_Auth {
         ]);
     }
 
+    // Read-only: lets the settings page show CONNECTED (and which platform)
+    // up front instead of always presenting the pairing buttons, so a site
+    // owner who already paired doesn't wonder whether clicking again is
+    // safe. Never creates, changes, or deletes a connection — a failed or
+    // unclear answer here must never block the normal pairing buttons below.
+    public function handle_check_connect_status() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'دسترسی غیرمجاز است.'], 403);
+        }
+        if (!check_ajax_referer('odview_sync_check_connect_status', 'nonce', false)) {
+            wp_send_json_error(['message' => 'درخواست امنیتی معتبر نیست.'], 403);
+        }
+
+        $backend_url = $this->backend_url();
+        $secret = get_option($this->option_key);
+        if (!$backend_url || !is_string($secret) || $secret === '') {
+            wp_send_json_success(['connected' => false, 'checked' => false]);
+        }
+
+        $site_url = untrailingslashit(get_site_url());
+        $issued_at = time();
+        $proof = hash_hmac('sha256', "status\n{$site_url}\n{$issued_at}", $secret);
+
+        $response = wp_safe_remote_post($backend_url . '/api/connect/status', [
+            'timeout' => 10,
+            'redirection' => 0,
+            'sslverify' => true,
+            'headers' => [
+                'Content-Type' => 'application/json; charset=utf-8',
+                'Accept' => 'application/json',
+                'X-ODVIEW-CONNECT-PROOF' => $proof,
+                'User-Agent' => 'ODview-Sync/' . ODVIEW_SYNC_VERSION,
+            ],
+            'body' => wp_json_encode([
+                'site_url' => $site_url,
+                'secret' => $secret,
+                'issued_at' => $issued_at,
+            ]),
+        ]);
+
+        // A network hiccup or a backend blip is not "not connected" — it's
+        // unknown. The page falls back to the pairing buttons either way,
+        // but keeps the two cases distinct for support/debugging later.
+        if (is_wp_error($response)) {
+            wp_send_json_success(['connected' => false, 'checked' => false]);
+        }
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $decoded_body = json_decode(wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || !is_array($decoded_body) || ($decoded_body['status'] ?? '') !== 'ok') {
+            wp_send_json_success(['connected' => false, 'checked' => false]);
+        }
+
+        if (empty($decoded_body['connected'])) {
+            wp_send_json_success(['connected' => false, 'checked' => true]);
+        }
+
+        $platform = is_string($decoded_body['platform'] ?? null) ? sanitize_key($decoded_body['platform']) : '';
+        wp_send_json_success([
+            'connected' => true,
+            'checked' => true,
+            'platform' => $this->valid_platform($platform) ? $platform : '',
+        ]);
+    }
+
     // Admin page: one-click pairing is the primary path; the old manual path
     // remains available as a recovery option for installations that cannot be
     // publicly reached by the backend.
@@ -267,12 +309,6 @@ class ODviewSync_Auth {
             <?php if (isset($_GET['regenerated'])): ?>
                 <div class="notice notice-success"><p>کلید امنیتی جدید ساخته شد. توجه: اگر قبلاً این سایت را در ربات وصل کرده‌اید، باید دوباره وصل کنید چون کلید قبلی دیگر معتبر نیست.</p></div>
             <?php endif; ?>
-            <?php if (isset($_GET['backend_saved'])): ?>
-                <div class="notice notice-success"><p>آدرس سرور اتصال ذخیره شد.</p></div>
-            <?php endif; ?>
-            <?php if (isset($_GET['backend_error'])): ?>
-                <div class="notice notice-error"><p>یک URL عمومی و HTTPS معتبر برای سرور بازو وارد کنید.</p></div>
-            <?php endif; ?>
             <?php if (!$wc_active): ?>
                 <div class="notice notice-warning"><p>⚠️ افزونه‌ی ووکامرس روی این سایت فعال نیست. ساخت محصول از طریق بازو نیاز به ووکامرس دارد.</p></div>
             <?php endif; ?>
@@ -282,39 +318,33 @@ class ODviewSync_Auth {
                     <span class="dashicons dashicons-admin-links" aria-hidden="true"></span>
                     <div>
                         <h2 id="odview-pairing-title">اتصال امن با یک کلیک</h2>
-                        <p>یک‌بار سرور بازوی خودتان را وارد کنید؛ سپس بله یا تلگرام را انتخاب کنید و لینک یا QR را باز کنید. هیچ کلید امنیتی در چت، لینک یا QR نمایش داده نمی‌شود.</p>
+                        <p>بله یا تلگرام را انتخاب کنید و لینک یا QR را باز کنید. هیچ کلید امنیتی در چت، لینک یا QR نمایش داده نمی‌شود.</p>
                     </div>
                 </div>
-
-                <form class="odview-backend-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
-                    <?php wp_nonce_field('odview_sync_save_backend_url'); ?>
-                    <input type="hidden" name="action" value="odview_sync_save_backend_url">
-                    <label for="odview-sync-backend-url">آدرس HTTPS سرور بازو</label>
-                    <div class="odview-backend-form__controls">
-                        <input id="odview-sync-backend-url" name="backend_url" type="url" dir="ltr" class="regular-text code" placeholder="https://bot.example.com" value="<?php echo esc_attr($backend_url); ?>" required>
-                        <button type="submit" class="button button-secondary">ذخیرهٔ سرور</button>
-                    </div>
-                    <p class="description">URL ریشهٔ یک سرور HTTPS عمومی را وارد کنید؛ سرور باید به همین سایت HTTPS دسترسی داشته باشد. این تنظیم فقط در همین سایت ذخیره می‌شود.</p>
-                </form>
 
                 <?php if ($backend_url): ?>
                     <div id="odview-pairing-app" class="odview-pairing-app"
                         data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>"
-                        data-nonce="<?php echo esc_attr(wp_create_nonce('odview_sync_generate_connect_token')); ?>">
-                        <h3>ربات موردنظر را انتخاب کنید</h3>
-                        <div class="odview-pairing-actions">
-                            <button type="button" class="button button-primary button-hero odview-pairing-button" data-platform="telegram">
-                                <span class="dashicons dashicons-format-chat" aria-hidden="true"></span> اتصال با تلگرام
-                            </button>
-                            <button type="button" class="button button-secondary button-hero odview-pairing-button" data-platform="bale">
-                                <span class="dashicons dashicons-format-chat" aria-hidden="true"></span> اتصال با بله
-                            </button>
+                        data-nonce="<?php echo esc_attr(wp_create_nonce('odview_sync_generate_connect_token')); ?>"
+                        data-status-nonce="<?php echo esc_attr(wp_create_nonce('odview_sync_check_connect_status')); ?>">
+                        <p id="odview-connection-status" class="odview-pairing-status" role="status" aria-live="polite">در حال بررسی وضعیت اتصال…</p>
+                        <div id="odview-connected-card" class="odview-connected-card" hidden></div>
+                        <div id="odview-pairing-chooser">
+                            <h3>ربات موردنظر را انتخاب کنید</h3>
+                            <div class="odview-pairing-actions">
+                                <button type="button" class="button button-primary button-hero odview-pairing-button" data-platform="telegram">
+                                    <span class="dashicons dashicons-format-chat" aria-hidden="true"></span> اتصال با تلگرام
+                                </button>
+                                <button type="button" class="button button-secondary button-hero odview-pairing-button" data-platform="bale">
+                                    <span class="dashicons dashicons-format-chat" aria-hidden="true"></span> اتصال با بله
+                                </button>
+                            </div>
                         </div>
                         <p id="odview-pairing-status" class="odview-pairing-status" role="status" aria-live="polite"></p>
                         <div id="odview-pairing-result" class="odview-pairing-result" hidden></div>
                     </div>
                 <?php else: ?>
-                    <p class="odview-pairing-hint">برای ساخت لینک اتصال، ابتدا آدرس HTTPS سرور بازو را ذخیره کنید.</p>
+                    <p class="odview-pairing-hint">سرویس اتصال در حال حاضر در دسترس نیست. لطفاً بعداً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.</p>
                 <?php endif; ?>
             </section>
 
@@ -355,7 +385,89 @@ class ODviewSync_Auth {
             var buttons = app.querySelectorAll('.odview-pairing-button');
             var status = document.getElementById('odview-pairing-status');
             var result = document.getElementById('odview-pairing-result');
+            var connectionStatus = document.getElementById('odview-connection-status');
+            var connectedCard = document.getElementById('odview-connected-card');
+            var chooser = document.getElementById('odview-pairing-chooser');
             var names = {telegram: 'تلگرام', bale: 'بله'};
+
+            function showChooser() {
+                connectedCard.hidden = true;
+                while (connectedCard.firstChild) connectedCard.removeChild(connectedCard.firstChild);
+                chooser.hidden = false;
+            }
+
+            function showConnected(platform) {
+                chooser.hidden = true;
+                while (connectedCard.firstChild) connectedCard.removeChild(connectedCard.firstChild);
+
+                var line = document.createElement('p');
+                line.className = 'odview-connected-card__line';
+                line.textContent = '✅ این سایت هم‌اکنون به ' + (names[platform] || 'بازو') + ' متصل است.';
+                connectedCard.appendChild(line);
+
+                var reconnect = document.createElement('button');
+                reconnect.type = 'button';
+                reconnect.className = 'button button-secondary';
+                reconnect.textContent = 'اتصال به پیام‌رسان دیگر یا اتصال مجدد';
+                reconnect.addEventListener('click', showChooser);
+                connectedCard.appendChild(reconnect);
+
+                connectedCard.hidden = false;
+            }
+
+            // Chooser starts hidden and only appears once we know the real
+            // state, so a page load never flashes "choose a bot" in front of
+            // someone who is already connected.
+            chooser.hidden = true;
+
+            function checkStatusOnce() {
+                var form = new URLSearchParams();
+                form.set('action', 'odview_sync_check_connect_status');
+                form.set('nonce', app.getAttribute('data-status-nonce'));
+                return fetch(app.getAttribute('data-ajax-url'), {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+                    body: form.toString()
+                }).then(function (response) {
+                    return response.json().catch(function () { return {}; });
+                }).then(function (payload) {
+                    return payload && payload.success ? payload.data : null;
+                }).catch(function () { return null; });
+            }
+
+            checkStatusOnce().then(function (data) {
+                connectionStatus.hidden = true;
+                if (data && data.connected && data.platform) {
+                    showConnected(data.platform);
+                } else {
+                    showChooser();
+                }
+            });
+
+            // After a link is generated we don't know when the person presses
+            // Start on their phone — that happens entirely outside this page.
+            // Poll status a few times so a successful pairing is reflected
+            // here automatically; stop well before the link itself expires.
+            var pollTimer = null;
+            function pollUntilConnected(platform, expiresInSeconds) {
+                var attempts = 0;
+                var maxAttempts = Math.min(Math.ceil((expiresInSeconds || 180) / 4), 45);
+                if (pollTimer) window.clearInterval(pollTimer);
+                pollTimer = window.setInterval(function () {
+                    attempts += 1;
+                    checkStatusOnce().then(function (data) {
+                        if (data && data.connected) {
+                            window.clearInterval(pollTimer);
+                            clearResult();
+                            status.textContent = '';
+                            showConnected(data.platform || platform);
+                        } else if (attempts >= maxAttempts) {
+                            window.clearInterval(pollTimer);
+                        }
+                    });
+                }, 4000);
+            }
 
             function setBusy(busy) {
                 buttons.forEach(function (button) { button.disabled = busy; });
@@ -413,6 +525,7 @@ class ODviewSync_Auth {
                     }
                     clearResult();
                     setBusy(true);
+                    if (pollTimer) { window.clearInterval(pollTimer); pollTimer = null; }
                     status.textContent = 'در حال ساخت لینک امن و بررسی سایت…';
 
                     var form = new URLSearchParams();
@@ -439,6 +552,7 @@ class ODviewSync_Auth {
                         } else {
                             status.textContent = minutes ? 'لینک امن تا حدود ' + minutes + ' دقیقه معتبر است؛ اگر ربات خودکار باز نشد، دکمهٔ پایین را بزنید.' : 'لینک امن آماده است.';
                         }
+                        pollUntilConnected(payload.data.platform, payload.data.expires_in);
                     }).catch(function (error) {
                         if (botWindow && !botWindow.closed) {
                             botWindow.close();

@@ -42,6 +42,26 @@ def test_unconnected_tenant_returns_none(test_db):
     assert test_db.get_wp_connection(t) is None
 
 
+def test_find_wp_connection_status_matches_only_the_right_site_and_secret(test_db):
+    t_tg = test_db.get_or_create_tenant("telegram", 222)
+    test_db.save_wp_connection(t_tg, "https://shop.example", "right-secret")
+
+    match = test_db.find_wp_connection_status("https://shop.example", "right-secret")
+    assert match is not None
+    assert match["platform"] == "telegram"
+    assert match["connected_at"]  # an ISO timestamp string, not empty/None
+
+    assert test_db.find_wp_connection_status("https://shop.example", "wrong-secret") is None
+    assert test_db.find_wp_connection_status("https://other.example", "right-secret") is None
+
+
+def test_find_wp_connection_status_ignores_an_unverified_connection(test_db):
+    t = test_db.get_or_create_tenant("bale", 223)
+    test_db.save_wp_connection(t, "https://shop.example", "a-secret", verified=False)
+
+    assert test_db.find_wp_connection_status("https://shop.example", "a-secret") is None
+
+
 def test_secret_is_encrypted_at_rest(test_db, tmp_path):
     t = test_db.get_or_create_tenant("telegram", 111)
     test_db.save_wp_connection(t, "https://site.example", "my-plaintext-secret")

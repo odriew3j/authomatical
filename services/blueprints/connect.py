@@ -22,6 +22,7 @@ from config import Config
 from database.db import init_db
 from database.repository import (
     create_pending_connection,
+    find_wp_connection_status,
     pending_connection_is_available,
 )
 from services.connect_security import (
@@ -29,6 +30,7 @@ from services.connect_security import (
     MAX_CONNECT_SECRET_LENGTH,
     assert_site_host_is_public,
     has_valid_connect_proof,
+    has_valid_status_proof,
     is_supported_connect_platform,
     is_valid_connect_token,
     normalise_bot_username,
@@ -45,6 +47,9 @@ connect_bp = Blueprint("connect_bp", __name__)
 # so it cannot become a body-buffering DoS vector.
 MAX_REGISTER_BODY_BYTES = 4096
 _REGISTER_FIELDS = frozenset({"token", "platform", "site_url", "secret", "issued_at"})
+MAX_STATUS_BODY_BYTES = 2048
+_STATUS_FIELDS = frozenset({"site_url", "secret", "issued_at"})
+STATUS_PROOF_MAX_AGE_SECONDS = 60
 
 
 @connect_bp.after_request
@@ -235,6 +240,66 @@ def register() -> tuple[Response, int] | Response:
         "expires_in": Config.CONNECT_TOKEN_TTL_SECONDS,
         "deep_links": {platform: deep_link},
         "qr_paths": {platform: _qr_path(token, platform)},
+    })
+
+
+@connect_bp.route("/status", methods=["POST"])
+def status() -> tuple[Response, int] | Response:
+    """Read-only: does an active tenant connection already exist for this
+    exact site+secret? Lets the plugin show a CONNECTED state (with which
+    platform) up front instead of always presenting the pairing buttons and
+    risking a confusing duplicate pairing click. Never re-pings the
+    WordPress site and never creates, modifies or deletes a connection."""
+
+    if not request.is_json:
+        return _error("درخواست وضعیت باید JSON باشد.", 415)
+    raw_body = request.get_data(cache=True)
+    if len(raw_body) > MAX_STATUS_BODY_BYTES:
+        return _error("درخواست وضعیت بیش از حد بزرگ است.", 413)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) - _STATUS_FIELDS:
+        return _error("فیلدهای درخواست وضعیت نامعتبر است.", 400)
+
+    raw_site_url = data.get("site_url")
+    secret = data.get("secret")
+    issued_at = data.get("issued_at")
+    if not isinstance(raw_site_url, str):
+        return _error("آدرس سایت نامعتبر است.", 400)
+    raw_site_url = raw_site_url.strip().rstrip("/")
+    if not isinstance(secret, str) or not secret or len(secret) > MAX_CONNECT_SECRET_LENGTH:
+        return _error("کلید امنیتی نامعتبر است.", 400)
+    if isinstance(issued_at, bool) or not isinstance(issued_at, int):
+        return _error("زمان درخواست وضعیت نامعتبر است.", 400)
+    if abs(int(time.time()) - issued_at) > STATUS_PROOF_MAX_AGE_SECONDS:
+        return _error("زمان درخواست وضعیت منقضی شده است.", 400)
+
+    try:
+        site_url = normalise_site_url(raw_site_url)
+    except ConnectValidationError:
+        return _error("آدرس سایت باید یک URL عمومی HTTPS معتبر باشد.", 400)
+
+    if not has_valid_status_proof(
+        request.headers.get("X-ODVIEW-CONNECT-PROOF"),
+        secret,
+        raw_site_url,
+        issued_at,
+    ):
+        return _error("اعتبار درخواست وضعیت تأیید نشد.", 403)
+
+    try:
+        init_db()
+        connection = find_wp_connection_status(site_url, secret)
+    except Exception:
+        logger.error("Could not check one-click pairing connection status")
+        return _error("بررسی وضعیت اتصال ناموفق بود.", 503)
+
+    if not connection:
+        return jsonify({"status": "ok", "connected": False})
+    return jsonify({
+        "status": "ok",
+        "connected": True,
+        "platform": connection["platform"],
+        "connected_at": connection["connected_at"],
     })
 
 

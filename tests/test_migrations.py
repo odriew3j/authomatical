@@ -3,14 +3,23 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from sqlalchemy import create_engine
-
-from database import models  # noqa: F401 -- register model metadata
-from database.models import Tenant, WPConnection
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKeyConstraint,
+    Integer,
+    MetaData,
+    PrimaryKeyConstraint,
+    String,
+    Table,
+    UniqueConstraint,
+    create_engine,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
-HEAD_REVISION = "20260902_02"
+HEAD_REVISION = "20260903_02"
 ARTICLE_TABLES_REVISION = "20260901_01"  # first revision to create article_jobs/attempts/results
 INITIAL_REVISION = "20260830_01"
 
@@ -91,18 +100,45 @@ def test_migration_adopts_existing_pre_article_tenant_schema(tmp_path, monkeypat
 
     engine = create_engine(url)
     try:
-        # Deliberately create only the schema that existed before this feature,
-        # rather than current Base.metadata (which now includes article tables).
-        Tenant.__table__.create(engine)
-        WPConnection.__table__.create(engine)
+        # Deliberately build only the schema that existed before this feature
+        # from frozen column definitions matching migration 20260830_01,
+        # rather than the live ORM classes in database/models.py — those
+        # models keep evolving (e.g. a later index on wp_connections.site_url)
+        # and a real legacy database predating this migration never had such
+        # a change, so it must not appear here either.
+        legacy_metadata = MetaData()
+        legacy_tenants = Table(
+            "tenants",
+            legacy_metadata,
+            Column("id", Integer, primary_key=True),
+            Column("platform", String(20), nullable=False),
+            Column("platform_chat_id", String(64), nullable=False),
+            Column("display_name", String(255), nullable=True),
+            Column("created_at", DateTime, nullable=True),
+            UniqueConstraint("platform", "platform_chat_id", name="uq_tenant_platform_chat"),
+        )
+        legacy_wp_connections = Table(
+            "wp_connections",
+            legacy_metadata,
+            Column("id", Integer, primary_key=True),
+            Column("tenant_id", Integer, nullable=False),
+            Column("site_url", String(500), nullable=False),
+            Column("secret_encrypted", String(2000), nullable=False),
+            Column("verified", Boolean, nullable=True),
+            Column("connected_at", DateTime, nullable=True),
+            Column("updated_at", DateTime, nullable=True),
+            ForeignKeyConstraint(["tenant_id"], ["tenants.id"]),
+            UniqueConstraint("tenant_id"),
+        )
+        legacy_metadata.create_all(engine)
         with engine.begin() as connection:
-            connection.execute(Tenant.__table__.insert().values(
+            connection.execute(legacy_tenants.insert().values(
                 id=7,
                 platform="telegram",
                 platform_chat_id="700",
                 display_name="legacy tenant",
             ))
-            connection.execute(WPConnection.__table__.insert().values(
+            connection.execute(legacy_wp_connections.insert().values(
                 id=8,
                 tenant_id=7,
                 site_url="https://legacy.example",

@@ -50,6 +50,10 @@ class Tenant(Base):
         "WPConnection", back_populates="tenant", uselist=False,
         cascade="all, delete-orphan",
     )
+    license = relationship(
+        "License", back_populates="tenant", uselist=False,
+        cascade="all, delete-orphan",
+    )
     article_jobs = relationship(
         "ArticleJob", back_populates="tenant", cascade="all, delete-orphan",
     )
@@ -76,6 +80,10 @@ class WPConnection(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     tenant = relationship("Tenant", back_populates="wp_connection")
+
+    __table_args__ = (
+        Index("ix_wp_connections_site_url", "site_url"),
+    )
 
 
 class PendingConnection(Base):
@@ -104,6 +112,63 @@ class PendingConnection(Base):
         # Keep the named constraint aligned with the Alembic schema in
         # addition to the unique lookup index declared on token_digest.
         UniqueConstraint("token_digest", name="uq_pending_connections_token_digest"),
+    )
+
+
+class License(Base):
+    """Per-tenant feature entitlements and AI quota ceilings.
+
+    ``plan_key`` is a human-readable label only (shown in the dashboard/bot,
+    used for support and analytics) — it must never be branched on in code
+    (``if plan_key == "pro"``). All authorization and quota decisions read
+    ``features_json`` and the limit columns instead, so pricing/plan changes
+    never require touching enforcement logic. One row per tenant for now;
+    an Agency plan managing several WordPress sites is still one tenant/
+    license today, since each WordPress site already maps to its own Tenant
+    row (see Tenant docstring) — a dedicated multi-site grouping concept can
+    be layered on later without reshaping this table.
+    """
+
+    __tablename__ = "licenses"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, unique=True)
+    plan_key = Column(String(50), nullable=False, default="trial")
+    status = Column(String(20), nullable=False, default="active")
+    # JSON object of feature-name -> bool, e.g. {"bot": true, "ai": false}.
+    # Text keeps this portable across PostgreSQL and the SQLite dev/test DB,
+    # same choice already made for ArticleResult.chapters_json.
+    features_json = Column(Text, nullable=False, default="{}")
+    ai_daily_limit = Column(Integer, nullable=True)
+    ai_monthly_limit = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    tenant = relationship("Tenant", back_populates="license")
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended', 'expired')", name="ck_licenses_status"),
+    )
+
+
+class AiUsage(Base):
+    """One row per consumed AI credit, for quota enforcement and reporting.
+
+    ``operation`` and ``credits`` are deliberately generic (not "article
+    count") so different operations can cost different amounts later
+    (e.g. a long article vs. a short rewrite) without a schema change.
+    """
+
+    __tablename__ = "ai_usage"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    operation = Column(String(50), nullable=False)
+    credits = Column(Integer, nullable=False, default=1)
+    occurred_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_ai_usage_tenant_occurred", "tenant_id", "occurred_at"),
     )
 
 

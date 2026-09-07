@@ -191,6 +191,24 @@ def has_valid_connect_proof(
     )
 
 
+def status_proof(secret: str, site_url: str, issued_at: int) -> str:
+    """HMAC for the read-only /status check.
+
+    Deliberately a different message shape (a literal "status" component
+    instead of platform/token) than ``connect_proof`` so a captured proof for
+    one endpoint is never replayable against the other.
+    """
+
+    message = f"status\n{site_url}\n{issued_at}".encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def has_valid_status_proof(proof: object, secret: str, site_url: str, issued_at: int) -> bool:
+    if not isinstance(proof, str) or CONNECT_PROOF_RE.fullmatch(proof) is None:
+        return False
+    return hmac.compare_digest(proof.lower(), status_proof(secret, site_url, issued_at))
+
+
 def connect_token_digest(token: str) -> str:
     """Stable lookup digest; raw bearer tokens are never persisted."""
 
